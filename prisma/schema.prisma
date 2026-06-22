@@ -1,0 +1,391 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  SUPER_ADMIN
+  ADMIN
+  USER
+}
+
+enum AccountType {
+  CASH
+  BANK
+  CUSTOMER
+  SUPPLIER
+  EMPLOYEE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  PARTIAL
+  OVERDUE
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CARD
+  CHEQUE
+  OTHER
+}
+
+enum ExpenseCategory {
+  AIRLINE
+  HOTEL
+  OFFICE
+  SALARY
+  MARKETING
+  OTHER
+}
+
+enum IncomeCategory {
+  PACKAGE_BOOKING
+  VISA_SERVICE
+  HOTEL_RESERVATION
+  TICKET_SALE
+  COMMISSION
+  OTHER
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMATION
+  PAYMENT_REMINDER
+  DUE_ALERT
+  SYSTEM_ANNOUNCEMENT
+  EMAIL
+}
+
+enum ActivityAction {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  VIEW
+  EXPORT
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        RoleName         @unique
+  description String?
+  permissions RolePermission[]
+  users       User[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  resource    String
+  action      String
+  description String?
+  roles       RolePermission[]
+  createdAt   DateTime         @default(now())
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  password      String
+  firstName     String
+  lastName      String
+  phone         String?
+  isActive      Boolean        @default(true)
+  roleId        String
+  role          Role           @relation(fields: [roleId], references: [id])
+  createdById   String?
+  createdBy     User?          @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers  User[]         @relation("UserCreatedBy")
+  bookings      Booking[]      @relation("BookingCreatedBy")
+  payments      Payment[]      @relation("PaymentRecordedBy")
+  expenses      Expense[]      @relation("ExpenseCreatedBy")
+  notifications Notification[]
+  activityLogs  ActivityLog[]
+  loginHistory  LoginHistory[]
+  employeeAccount Account?     @relation("EmployeeAccount")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Customer {
+  id              String             @id @default(uuid())
+  firstName       String
+  lastName        String
+  email           String?
+  phone           String
+  address         String?
+  city            String?
+  country         String?
+  passportNo      String?
+  nationalId      String?
+  dateOfBirth     DateTime?
+  notes           String?
+  isActive        Boolean            @default(true)
+  documents       CustomerDocument[]
+  bookings        Booking[]
+  bookingCustomers BookingCustomer[]
+  invoices        Invoice[]
+  account         Account?           @relation("CustomerAccount")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model CustomerDocument {
+  id         String   @id @default(uuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       String
+  fileName   String
+  filePath   String
+  notes      String?
+  uploadedAt DateTime @default(now())
+}
+
+model Package {
+  id           String               @id @default(uuid())
+  name         String
+  description  String?
+  price        Decimal              @db.Decimal(12, 2)
+  duration     Int
+  maxCapacity  Int                  @default(1)
+  isActive     Boolean              @default(true)
+  destinations PackageDestination[]
+  bookings     Booking[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+}
+
+model PackageDestination {
+  id          String  @id @default(uuid())
+  packageId   String
+  package     Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  destination String
+  country     String?
+  nights      Int     @default(1)
+  order       Int     @default(0)
+}
+
+model Booking {
+  id               String            @id @default(uuid())
+  bookingNumber    String            @unique
+  packageId        String
+  package          Package           @relation(fields: [packageId], references: [id])
+  customerId       String
+  customer         Customer          @relation(fields: [customerId], references: [id])
+  createdById      String
+  createdBy        User              @relation("BookingCreatedBy", fields: [createdById], references: [id])
+  status           BookingStatus     @default(PENDING)
+  travelDate       DateTime?
+  returnDate       DateTime?
+  numTravelers     Int               @default(1)
+  totalAmount      Decimal           @db.Decimal(12, 2)
+  paidAmount       Decimal           @default(0) @db.Decimal(12, 2)
+  discount         Decimal           @default(0) @db.Decimal(12, 2)
+  notes            String?
+  bookingCustomers BookingCustomer[]
+  invoices         Invoice[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model BookingCustomer {
+  id         String   @id @default(uuid())
+  bookingId  String
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  @@unique([bookingId, customerId])
+}
+
+model Account {
+  id           String        @id @default(uuid())
+  name         String
+  code         String        @unique
+  type         AccountType
+  balance      Decimal       @default(0) @db.Decimal(14, 2)
+  description  String?
+  isActive     Boolean       @default(true)
+  customerId   String?       @unique
+  customer     Customer?     @relation("CustomerAccount", fields: [customerId], references: [id])
+  employeeId   String?       @unique
+  employee     User?         @relation("EmployeeAccount", fields: [employeeId], references: [id])
+  transactions Transaction[]
+  expenses     Expense[]
+  payments     Payment[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model JournalEntry {
+  id           String        @id @default(uuid())
+  entryNumber  String        @unique
+  date         DateTime      @default(now())
+  description  String
+  reference    String?
+  notes        String?
+  receiptPath  String?
+  isDeleted    Boolean       @default(false)
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Transaction {
+  id             String       @id @default(uuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account      @relation(fields: [accountId], references: [id])
+  debit          Decimal      @default(0) @db.Decimal(14, 2)
+  credit         Decimal      @default(0) @db.Decimal(14, 2)
+  description    String?
+  createdAt      DateTime     @default(now())
+}
+
+model Invoice {
+  id            String        @id @default(uuid())
+  invoiceNumber String        @unique
+  bookingId     String?
+  booking       Booking?      @relation(fields: [bookingId], references: [id])
+  customerId    String
+  customer      Customer      @relation(fields: [customerId], references: [id])
+  subtotal      Decimal       @db.Decimal(12, 2)
+  tax           Decimal       @default(0) @db.Decimal(12, 2)
+  discount      Decimal       @default(0) @db.Decimal(12, 2)
+  totalAmount   Decimal       @db.Decimal(12, 2)
+  paidAmount    Decimal       @default(0) @db.Decimal(12, 2)
+  status        InvoiceStatus @default(DRAFT)
+  issueDate     DateTime      @default(now())
+  dueDate       DateTime
+  notes         String?
+  payments      Payment[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  paymentNumber String        @unique
+  invoiceId     String?
+  invoice       Invoice?      @relation(fields: [invoiceId], references: [id])
+  accountId     String
+  account       Account       @relation(fields: [accountId], references: [id])
+  amount        Decimal       @db.Decimal(12, 2)
+  method        PaymentMethod @default(CASH)
+  reference     String?
+  notes         String?
+  paymentDate   DateTime      @default(now())
+  recordedById  String
+  recordedBy    User          @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  createdAt     DateTime      @default(now())
+}
+
+model Expense {
+  id           String          @id @default(uuid())
+  expenseNumber String         @unique
+  category     ExpenseCategory
+  accountId    String
+  account      Account         @relation(fields: [accountId], references: [id])
+  amount       Decimal         @db.Decimal(12, 2)
+  description  String
+  vendor       String?
+  receiptPath  String?
+  expenseDate  DateTime        @default(now())
+  createdById  String
+  createdBy    User            @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+model IncomeEntry {
+  id          String         @id @default(uuid())
+  entryNumber String         @unique
+  category    IncomeCategory
+  amount      Decimal        @db.Decimal(12, 2)
+  description String
+  reference   String?
+  receiptPath String?
+  entryDate   DateTime       @default(now())
+  createdAt   DateTime       @default(now())
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  link      String?
+  createdAt DateTime         @default(now())
+}
+
+model ActivityLog {
+  id         String         @id @default(uuid())
+  userId     String?
+  user       User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     ActivityAction
+  entity     String
+  entityId   String?
+  details    String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime       @default(now())
+}
+
+model LoginHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress String?
+  userAgent String?
+  success   Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model Setting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  category  String   @default("general")
+  updatedAt DateTime @updatedAt
+}
+
+model DeletedRecord {
+  id         String   @id @default(uuid())
+  entity     String
+  entityId   String
+  data       String
+  deletedBy  String?
+  deletedAt  DateTime @default(now())
+}
