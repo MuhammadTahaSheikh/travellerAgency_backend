@@ -8,6 +8,7 @@ router.use(authenticate);
 router.get('/', booking.getBookings);
 router.get('/:id', booking.getBooking);
 router.post('/', booking.createBooking);
+router.post('/:id/generate-invoice', booking.generateBookingInvoice);
 router.put('/:id', booking.updateBooking);
 router.delete('/:id', booking.deleteBooking);
 

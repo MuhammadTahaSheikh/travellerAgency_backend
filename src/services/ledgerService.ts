@@ -182,6 +182,45 @@ export async function getLedgerTransactions(filters?: {
   });
 }
 
+export async function reverseJournalEntry(
+  journalEntryId: string,
+  description: string,
+  tx?: TxClient
+) {
+  const client = tx || prisma;
+  const original = await client.journalEntry.findUnique({
+    where: { id: journalEntryId },
+    include: { transactions: true },
+  });
+
+  if (!original || original.isDeleted) return null;
+
+  const reversedLines = original.transactions.map((t) => ({
+    accountId: t.accountId,
+    debit: Number(t.credit),
+    credit: Number(t.debit),
+    description: `Reversal: ${t.description || ''}`,
+  }));
+
+  const reversal = await createJournalEntry(description, reversedLines, { reference: original.reference || undefined }, client);
+  await client.journalEntry.update({ where: { id: journalEntryId }, data: { isDeleted: true } });
+  return reversal;
+}
+
+export async function getOrCreateVendorExpenseAccount(vendorId: string, vendorName: string, tx?: TxClient) {
+  const client = tx || prisma;
+  const existing = await client.account.findFirst({ where: { vendorId } });
+  if (existing) return existing;
+
+  return client.account.create({
+    data: {
+      name: `Vendor: ${vendorName}`,
+      code: generateNumber('VND'),
+      type: 'SUPPLIER',
+      vendorId,
+    },
+  });
+}
 export async function getTrialBalance(asOfDate?: Date) {
   const accounts = await prisma.account.findMany({ where: { isActive: true } });
   return accounts.map((acc) => ({

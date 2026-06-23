@@ -1,10 +1,11 @@
 import { Response } from 'express';
 import prisma from '../config/database';
 import { AuthRequest } from '../types';
-import { paginate, formatPagination, generateNumber, applyDateFilter } from '../utils/helpers';
+import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
-import { createJournalEntry, resolvePaymentCreditAccount } from '../services/ledgerService';
+import { createJournalEntry, resolvePaymentCreditAccount, reverseJournalEntry } from '../services/ledgerService';
+import { generateVoucherFromPayment } from '../services/voucherService';
 
 export async function getPayments(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
@@ -23,6 +24,7 @@ export async function getPayments(req: AuthRequest, res: Response) {
         invoice: { include: { customer: true } },
         account: true,
         recordedBy: { select: { firstName: true, lastName: true } },
+        vouchers: true,
       },
     }),
     prisma.payment.count({ where }),
@@ -38,7 +40,7 @@ export async function getPayments(req: AuthRequest, res: Response) {
 }
 
 export async function createPayment(req: AuthRequest, res: Response) {
-  const { invoiceId, accountId, amount, method, reference, notes, paymentDate } = req.body;
+  const { invoiceId, accountId, amount, method, reference, notes, paymentDate, autoVerify } = req.body;
 
   if (!amount || !accountId) {
     return res.status(400).json({ success: false, error: 'Amount and account are required' });
@@ -52,12 +54,12 @@ export async function createPayment(req: AuthRequest, res: Response) {
   try {
     const payment = await prisma.$transaction(async (tx) => {
       const receivingAccount = await tx.account.findUnique({ where: { id: accountId } });
-      if (!receivingAccount) {
-        throw new Error('Selected account not found');
-      }
+      if (!receivingAccount) throw new Error('Selected account not found');
       if (!['CASH', 'BANK'].includes(receivingAccount.type)) {
         throw new Error('Payments must be recorded to a Cash or Bank account');
       }
+
+      const verified = autoVerify !== false;
 
       const pmt = await tx.payment.create({
         data: {
@@ -70,47 +72,134 @@ export async function createPayment(req: AuthRequest, res: Response) {
           notes,
           paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
           recordedById: req.user!.id,
+          verificationStatus: verified ? 'VERIFIED' : 'PENDING',
+          verifiedAt: verified ? new Date() : undefined,
         },
         include: { invoice: true, account: true },
       });
 
-      if (invoiceId) {
-        const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
-        if (invoice) {
-          const newPaid = Number(invoice.paidAmount) + paymentAmount;
-          const status = newPaid >= Number(invoice.totalAmount) ? 'PAID' : 'PARTIAL';
-          await tx.invoice.update({
-            where: { id: invoiceId },
-            data: { paidAmount: newPaid, status },
-          });
-          if (invoice.bookingId) {
-            await tx.booking.update({
-              where: { id: invoice.bookingId },
-              data: { paidAmount: { increment: paymentAmount } },
+      let journalEntryId: string | undefined;
+
+      if (verified) {
+        if (invoiceId) {
+          const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+          if (invoice) {
+            const newPaid = Number(invoice.paidAmount) + paymentAmount;
+            const status = newPaid >= Number(invoice.totalAmount) ? 'PAID' : 'PARTIAL';
+            await tx.invoice.update({
+              where: { id: invoiceId },
+              data: { paidAmount: newPaid, status },
             });
+            if (invoice.bookingId) {
+              await tx.booking.update({
+                where: { id: invoice.bookingId },
+                data: { paidAmount: { increment: paymentAmount } },
+              });
+            }
           }
         }
+
+        const creditAccount = await resolvePaymentCreditAccount(invoiceId, tx);
+        const entry = await createJournalEntry(
+          `Payment received: ${pmt.paymentNumber}`,
+          [
+            { accountId, debit: paymentAmount, description: 'Payment received' },
+            { accountId: creditAccount.id, credit: paymentAmount, description: 'Reduce receivable' },
+          ],
+          { reference: pmt.paymentNumber },
+          tx
+        );
+        journalEntryId = entry.id;
+
+        await tx.payment.update({
+          where: { id: pmt.id },
+          data: { journalEntryId },
+        });
       }
 
-      const creditAccount = await resolvePaymentCreditAccount(invoiceId, tx);
-
-      await createJournalEntry(
-        `Payment received: ${pmt.paymentNumber}`,
-        [
-          { accountId, debit: paymentAmount, description: 'Payment received' },
-          { accountId: creditAccount.id, credit: paymentAmount, description: 'Reduce receivable' },
-        ],
-        { reference: pmt.paymentNumber },
-        tx
-      );
-
-      return pmt;
+      return { ...pmt, journalEntryId };
     });
 
     await logActivity(req, 'CREATE', 'Payment', payment.id);
+
+    if (payment.verificationStatus === 'VERIFIED' && payment.invoiceId) {
+      try {
+        await generateVoucherFromPayment(payment.id);
+      } catch {
+        // Voucher only created when booking has hotel service
+      }
+    }
+
     return res.status(201).json({ success: true, data: payment });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to record payment';
+    return res.status(400).json({ success: false, error: message });
+  }
+}
+
+export async function verifyPayment(req: AuthRequest, res: Response) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paramId(req) },
+    include: { invoice: true },
+  });
+
+  if (!payment) return res.status(404).json({ success: false, error: 'Payment not found' });
+  if (payment.verificationStatus === 'VERIFIED') {
+    return res.status(400).json({ success: false, error: 'Payment already verified' });
+  }
+
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const paymentAmount = Number(payment.amount);
+
+      if (payment.invoiceId && payment.invoice) {
+        const newPaid = Number(payment.invoice.paidAmount) + paymentAmount;
+        const status = newPaid >= Number(payment.invoice.totalAmount) ? 'PAID' : 'PARTIAL';
+        await tx.invoice.update({
+          where: { id: payment.invoiceId },
+          data: { paidAmount: newPaid, status },
+        });
+        if (payment.invoice.bookingId) {
+          await tx.booking.update({
+            where: { id: payment.invoice.bookingId },
+            data: { paidAmount: { increment: paymentAmount } },
+          });
+        }
+      }
+
+      const creditAccount = await resolvePaymentCreditAccount(payment.invoiceId || undefined, tx);
+      const entry = await createJournalEntry(
+        `Payment verified: ${payment.paymentNumber}`,
+        [
+          { accountId: payment.accountId, debit: paymentAmount, description: 'Payment received' },
+          { accountId: creditAccount.id, credit: paymentAmount, description: 'Reduce receivable' },
+        ],
+        { reference: payment.paymentNumber },
+        tx
+      );
+
+      return tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          verificationStatus: 'VERIFIED',
+          verifiedAt: new Date(),
+          journalEntryId: entry.id,
+        },
+        include: { invoice: true, account: true },
+      });
+    });
+
+    await logActivity(req, 'UPDATE', 'Payment', payment.id, 'Verified');
+
+    try {
+      await generateVoucherFromPayment(updated.id);
+    } catch {
+      // No hotel service on booking
+    }
+
+    return res.json({ success: true, data: updated, message: 'Payment verified' });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to verify payment';
     return res.status(400).json({ success: false, error: message });
   }
 }
@@ -124,7 +213,11 @@ export async function deletePayment(req: AuthRequest, res: Response) {
   if (!payment) return res.status(404).json({ success: false, error: 'Payment not found' });
 
   await prisma.$transaction(async (tx) => {
-    if (payment.invoiceId && payment.invoice) {
+    if (payment.journalEntryId) {
+      await reverseJournalEntry(payment.journalEntryId, `Reversal: ${payment.paymentNumber}`, tx);
+    }
+
+    if (payment.invoiceId && payment.invoice && payment.verificationStatus === 'VERIFIED') {
       const newPaid = Math.max(0, Number(payment.invoice.paidAmount) - Number(payment.amount));
       let status: 'SENT' | 'PARTIAL' | 'PAID' = 'SENT';
       if (newPaid > 0 && newPaid < Number(payment.invoice.totalAmount)) status = 'PARTIAL';
@@ -147,7 +240,7 @@ export async function deletePayment(req: AuthRequest, res: Response) {
       data: {
         entity: 'Payment',
         entityId: payment.id,
-        data: JSON.stringify(payment),
+        data: serializeForDeletedRecord(payment),
         deletedBy: req.user?.id,
       },
     });
@@ -165,7 +258,7 @@ export async function getDailyCollection(req: AuthRequest, res: Response) {
   const endOfDay = new Date(date.setHours(23, 59, 59, 999));
 
   const payments = await prisma.payment.findMany({
-    where: { paymentDate: { gte: startOfDay, lte: endOfDay } },
+    where: { paymentDate: { gte: startOfDay, lte: endOfDay }, verificationStatus: 'VERIFIED' },
     include: { invoice: { include: { customer: true } }, account: true },
   });
 

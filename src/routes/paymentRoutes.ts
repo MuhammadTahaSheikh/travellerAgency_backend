@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticate);
 router.get('/', payment.getPayments);
 router.post('/', payment.createPayment);
+router.post('/:id/verify', payment.verifyPayment);
 router.get('/daily-collection', payment.getDailyCollection);
 router.get('/accounts', payment.getAccounts);
 router.post('/accounts', payment.createAccount);

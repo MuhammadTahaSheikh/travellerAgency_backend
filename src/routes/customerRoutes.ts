@@ -6,6 +6,7 @@ const router = Router();
 
 router.use(authenticate);
 router.get('/', customer.getCustomers);
+router.get('/:id/ledger', customer.getCustomerLedger);
 router.get('/:id', customer.getCustomer);
 router.post('/', customer.createCustomer);
 router.put('/:id', customer.updateCustomer);

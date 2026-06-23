@@ -203,6 +203,46 @@ async function main() {
     }
   }
 
+  const defaultVendors = [
+    { name: 'Grand Hotel Partners', category: 'HOTEL' as const },
+    { name: 'Global Visa Services', category: 'VISA' as const },
+    { name: 'Skyline Ticketing', category: 'TICKETING' as const },
+  ];
+
+  for (const v of defaultVendors) {
+    const existing = await prisma.vendor.findFirst({ where: { name: v.name } });
+    if (!existing) {
+      const vendor = await prisma.vendor.create({ data: v });
+      await prisma.account.create({
+        data: {
+          name: `Vendor: ${vendor.name}`,
+          code: `VND-${v.category}`,
+          type: 'SUPPLIER',
+          vendorId: vendor.id,
+        },
+      });
+    }
+  }
+
+  const existingTemplate = await prisma.invoiceTemplate.findFirst({ where: { isDefault: true } });
+  if (!existingTemplate) {
+    await prisma.invoiceTemplate.create({
+      data: {
+        name: 'Default Invoice',
+        isDefault: true,
+        header: 'Moazin Travel Agency\nProfessional Travel Services',
+        footer: 'Thank you for choosing Moazin Travel!',
+        terms: 'Payment is due by the due date shown above.',
+      },
+    });
+  }
+
+  await prisma.account.upsert({
+    where: { code: 'COS-001' },
+    update: {},
+    create: { name: 'Cost of Sales', code: 'COS-001', type: 'SUPPLIER' },
+  });
+
   console.log('Seed completed successfully!');
   console.log('\nDefault login credentials (password: admin123):');
   console.log('  Super Admin: superadmin@travel.com');

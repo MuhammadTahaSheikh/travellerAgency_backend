@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import prisma from '../config/database';
 import { AuthRequest } from '../types';
-import { paginate, formatPagination } from '../utils/helpers';
+import { paginate, formatPagination, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import { createCustomerAccount } from '../services/ledgerService';
 import { logActivity } from '../middleware/activityLogger';
@@ -90,7 +90,7 @@ export async function deleteCustomer(req: AuthRequest, res: Response) {
   if (!customer) return res.status(404).json({ success: false, error: 'Customer not found' });
 
   await prisma.deletedRecord.create({
-    data: { entity: 'Customer', entityId: customer.id, data: JSON.stringify(customer), deletedBy: req.user?.id },
+    data: { entity: 'Customer', entityId: customer.id, data: serializeForDeletedRecord(customer), deletedBy: req.user?.id },
   });
 
   await prisma.customer.update({ where: { id: paramId(req) }, data: { isActive: false } });
@@ -113,6 +113,60 @@ export async function getCustomerDocuments(req: AuthRequest, res: Response) {
     orderBy: { uploadedAt: 'desc' },
   });
   return res.json({ success: true, data: docs });
+}
+
+export async function getCustomerLedger(req: AuthRequest, res: Response) {
+  const customer = await prisma.customer.findUnique({
+    where: { id: paramId(req) },
+    include: {
+      account: true,
+      invoices: { orderBy: { issueDate: 'desc' } },
+      bookings: { select: { id: true, bookingNumber: true, totalAmount: true, paidAmount: true, status: true } },
+    },
+  });
+
+  if (!customer) return res.status(404).json({ success: false, error: 'Customer not found' });
+
+  const totalBilled = customer.invoices
+    .filter((i) => i.status !== 'CANCELLED')
+    .reduce((s, i) => s + Number(i.totalAmount), 0);
+  const totalPaid = customer.invoices
+    .filter((i) => i.status !== 'CANCELLED')
+    .reduce((s, i) => s + Number(i.paidAmount), 0);
+  const outstanding = totalBilled - totalPaid;
+
+  let transactions: unknown[] = [];
+  if (customer.account) {
+    transactions = await prisma.transaction.findMany({
+      where: { accountId: customer.account.id },
+      include: { journalEntry: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      customer: {
+        id: customer.id,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        phone: customer.phone,
+        email: customer.email,
+      },
+      account: customer.account,
+      summary: {
+        totalBilled,
+        totalPaid,
+        outstanding,
+        ledgerBalance: Number(customer.account?.balance || 0),
+      },
+      invoices: customer.invoices,
+      bookings: customer.bookings,
+      transactions,
+    },
+  });
 }
 
 export async function deleteCustomerDocument(req: AuthRequest, res: Response) {

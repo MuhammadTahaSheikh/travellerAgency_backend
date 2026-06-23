@@ -1,0 +1,320 @@
+import prisma from '../config/database';
+import { Prisma } from '@prisma/client';
+import { generateNumber } from '../utils/helpers';
+import { createJournalEntry, createCustomerAccount } from './ledgerService';
+
+type TxClient = Prisma.TransactionClient;
+
+async function getInvoicePrefix() {
+  const setting = await prisma.setting.findUnique({ where: { key: 'invoice_prefix' } });
+  return setting?.value || 'INV';
+}
+
+async function getOrCreateIncomeAccount(tx?: TxClient) {
+  const client = tx || prisma;
+  let account = await client.account.findFirst({ where: { code: 'INCOME-001' } });
+  if (!account) {
+    account = await client.account.create({
+      data: { name: 'Revenue Account', code: 'INCOME-001', type: 'CASH' },
+    });
+  }
+  return account;
+}
+
+async function getDefaultTemplate() {
+  let template = await prisma.invoiceTemplate.findFirst({ where: { isDefault: true } });
+  if (!template) {
+    template = await prisma.invoiceTemplate.create({
+      data: {
+        name: 'Default Invoice',
+        isDefault: true,
+        header: 'Moazin Travel Agency\nProfessional Travel Services',
+        footer: 'Thank you for choosing Moazin Travel!',
+        terms: 'Payment is due by the due date shown above. Late payments may incur additional charges.',
+      },
+    });
+  }
+  return template;
+}
+
+export async function generateInvoiceFromBooking(bookingId: string, dueDays = 14, tx?: TxClient) {
+  const client = tx || prisma;
+  const booking = await client.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      customer: { include: { account: true } },
+      package: true,
+      serviceItems: true,
+    },
+  });
+
+  if (!booking) throw new Error('Booking not found');
+
+  const existing = await client.invoice.findFirst({ where: { bookingId, status: { not: 'CANCELLED' } } });
+  if (existing) return existing;
+
+  const items: { description: string; quantity: number; unitPrice: number; amount: number; serviceType?: string }[] = [];
+
+  if (booking.package) {
+    items.push({
+      description: `${booking.package.name} (${booking.numTravelers} traveler(s))`,
+      quantity: booking.numTravelers,
+      unitPrice: Number(booking.package.price),
+      amount: Number(booking.package.price) * booking.numTravelers,
+      serviceType: 'PACKAGE',
+    });
+  }
+
+  for (const item of booking.serviceItems) {
+    items.push({
+      description: item.description,
+      quantity: 1,
+      unitPrice: Number(item.amount),
+      amount: Number(item.amount),
+      serviceType: item.serviceType,
+    });
+  }
+
+  if (items.length === 0) {
+    items.push({
+      description: `Booking ${booking.bookingNumber}`,
+      quantity: 1,
+      unitPrice: Number(booking.totalAmount),
+      amount: Number(booking.totalAmount),
+    });
+  }
+
+  const subtotal = items.reduce((sum, i) => sum + i.amount, 0);
+  const discount = Number(booking.discount);
+  const totalAmount = subtotal - discount;
+  const prefix = await getInvoicePrefix();
+  const dueDate = new Date();
+  dueDate.setDate(dueDate.getDate() + dueDays);
+
+  return client.invoice.create({
+    data: {
+      invoiceNumber: generateNumber(prefix),
+      bookingId,
+      customerId: booking.customerId,
+      subtotal,
+      discount,
+      totalAmount,
+      dueDate,
+      status: 'SENT',
+      items: {
+        create: items.map((i) => ({
+          description: i.description,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          amount: i.amount,
+          serviceType: i.serviceType as 'PACKAGE' | 'TICKET' | 'VISA' | 'HOTEL' | undefined,
+        })),
+      },
+    },
+    include: { items: true, customer: true, booking: true },
+  });
+}
+
+export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
+  const run = async (client: TxClient) => {
+    const invoice = await client.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { customer: { include: { account: true } } },
+    });
+
+    if (!invoice) throw new Error('Invoice not found');
+    if (invoice.confirmedAt) throw new Error('Invoice already confirmed');
+    if (invoice.status === 'CANCELLED') throw new Error('Cannot confirm cancelled invoice');
+
+    let customerAccount = invoice.customer?.account;
+    if (!customerAccount) {
+      customerAccount = await createCustomerAccount(
+        invoice.customerId,
+        `${invoice.customer?.firstName} ${invoice.customer?.lastName}`,
+      );
+    }
+
+    const incomeAccount = await getOrCreateIncomeAccount(client);
+    const amount = Number(invoice.totalAmount);
+
+    const entry = await createJournalEntry(
+      `Invoice confirmed: ${invoice.invoiceNumber}`,
+      [
+        { accountId: customerAccount.id, debit: amount, description: 'Customer receivable' },
+        { accountId: incomeAccount.id, credit: amount, description: 'Revenue recognized' },
+      ],
+      { reference: invoice.invoiceNumber },
+      client,
+    );
+
+    return client.invoice.update({
+      where: { id: invoiceId },
+      data: { confirmedAt: new Date(), journalEntryId: entry.id, status: 'SENT' },
+      include: { items: true, customer: true, booking: true },
+    });
+  };
+
+  if (tx) return run(tx);
+  return prisma.$transaction(run);
+}
+
+export async function renderInvoiceHtml(invoiceId: string) {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: {
+      customer: true,
+      booking: { include: { package: true, serviceItems: true } },
+      items: true,
+    },
+  });
+
+  if (!invoice) throw new Error('Invoice not found');
+
+  const template = await getDefaultTemplate();
+  const itemRows = invoice.items
+    .map(
+      (i) =>
+        `<tr><td>${i.description}</td><td style="text-align:center">${i.quantity}</td><td style="text-align:right">${Number(i.unitPrice).toLocaleString()}</td><td style="text-align:right">${Number(i.amount).toLocaleString()}</td></tr>`
+    )
+    .join('');
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Invoice ${invoice.invoiceNumber}</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; color: #1e293b; }
+  .header { border-bottom: 2px solid #0d9488; padding-bottom: 16px; margin-bottom: 24px; white-space: pre-line; }
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; }
+  th, td { border: 1px solid #e2e8f0; padding: 10px; }
+  th { background: #f1f5f9; text-align: left; }
+  .totals { text-align: right; margin-top: 16px; }
+  .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; white-space: pre-line; color: #64748b; font-size: 14px; }
+</style></head><body>
+<div class="header">${template.header}</div>
+<h2>INVOICE ${invoice.invoiceNumber}</h2>
+<p><strong>Bill To:</strong> ${invoice.customer?.firstName} ${invoice.customer?.lastName}<br>
+${invoice.customer?.phone || ''} ${invoice.customer?.email ? `| ${invoice.customer.email}` : ''}</p>
+<p><strong>Issue Date:</strong> ${new Date(invoice.issueDate).toLocaleDateString()}<br>
+<strong>Due Date:</strong> ${new Date(invoice.dueDate).toLocaleDateString()}<br>
+<strong>Status:</strong> ${invoice.status}</p>
+<table>
+  <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
+  <tbody>${itemRows}</tbody>
+</table>
+<div class="totals">
+  <p>Subtotal: ${Number(invoice.subtotal).toLocaleString()}</p>
+  ${Number(invoice.tax) > 0 ? `<p>Tax: ${Number(invoice.tax).toLocaleString()}</p>` : ''}
+  ${Number(invoice.discount) > 0 ? `<p>Discount: -${Number(invoice.discount).toLocaleString()}</p>` : ''}
+  <p><strong>Total: ${Number(invoice.totalAmount).toLocaleString()}</strong></p>
+  <p>Paid: ${Number(invoice.paidAmount).toLocaleString()}</p>
+  <p><strong>Outstanding: ${(Number(invoice.totalAmount) - Number(invoice.paidAmount)).toLocaleString()}</strong></p>
+</div>
+${template.terms ? `<p><strong>Terms:</strong> ${template.terms}</p>` : ''}
+<div class="footer">${template.footer}</div>
+</body></html>`;
+}
+
+export async function allocateVendorCosts(bookingId: string, tx?: TxClient) {
+  const run = async (client: TxClient) => {
+    const booking = await client.booking.findUnique({
+      where: { id: bookingId },
+      include: { serviceItems: { include: { vendor: { include: { account: true } } } } },
+    });
+
+    if (!booking) throw new Error('Booking not found');
+
+    const existing = await client.vendorCostAllocation.count({ where: { bookingId } });
+    if (existing > 0) return [];
+
+    const allocations = [];
+
+    for (const item of booking.serviceItems) {
+      const cost = Number(item.costAmount);
+      if (cost <= 0) continue;
+
+      const { getOrCreateVendorByCategory, createVendorAccount, vendorCategoryFromService } = await import('./vendorService');
+      const vendorRecord = item.vendor || (await getOrCreateVendorByCategory(vendorCategoryFromService(item.serviceType), client));
+      const vendorWithAccount = await client.vendor.findUnique({
+        where: { id: vendorRecord.id },
+        include: { account: true },
+      });
+      const vendorAccount = vendorWithAccount?.account || (await createVendorAccount(vendorRecord.id, vendorRecord.name, client));
+
+      const entry = await createJournalEntry(
+        `Vendor cost: ${item.description} (${booking.bookingNumber})`,
+        [
+          { accountId: vendorAccount.id, credit: cost, description: `Payable to ${vendorRecord.name}` },
+          { accountId: (await getOrCreateCostOfSalesAccount(client)).id, debit: cost, description: `Cost: ${item.serviceType}` },
+        ],
+        { reference: booking.bookingNumber },
+        client,
+      );
+
+      const allocation = await client.vendorCostAllocation.create({
+        data: {
+          bookingId,
+          vendorId: vendorRecord.id,
+          serviceType: item.serviceType,
+          amount: cost,
+          description: item.description,
+          journalEntryId: entry.id,
+        },
+        include: { vendor: true },
+      });
+      allocations.push(allocation);
+    }
+
+    return allocations;
+  };
+
+  if (tx) return run(tx);
+  return prisma.$transaction(run);
+}
+
+async function getOrCreateCostOfSalesAccount(tx?: TxClient) {
+  const client = tx || prisma;
+  let account = await client.account.findFirst({ where: { code: 'COS-001' } });
+  if (!account) {
+    account = await client.account.create({
+      data: { name: 'Cost of Sales', code: 'COS-001', type: 'SUPPLIER' },
+    });
+  }
+  return account;
+}
+
+export async function createCheckInsFromBooking(bookingId: string, tx?: TxClient) {
+  const client = tx || prisma;
+  const booking = await client.booking.findUnique({
+    where: { id: bookingId },
+    include: { customer: true, serviceItems: true },
+  });
+
+  if (!booking) return [];
+
+  const records = [];
+  const guestName = `${booking.customer.firstName} ${booking.customer.lastName}`;
+
+  for (const item of booking.serviceItems) {
+    if (item.serviceType !== 'HOTEL') continue;
+    const details = item.details as Record<string, string> | null;
+    const checkInDate = details?.checkInDate ? new Date(details.checkInDate) : booking.travelDate;
+    if (!checkInDate) continue;
+
+    const existing = await client.checkInRecord.findFirst({
+      where: { bookingId, hotelName: details?.hotelName || item.description },
+    });
+    if (existing) continue;
+
+    const record = await client.checkInRecord.create({
+      data: {
+        bookingId,
+        hotelName: details?.hotelName || item.description,
+        checkInDate,
+        guestName,
+        roomDetails: details?.roomType || details?.roomDetails || null,
+      },
+    });
+    records.push(record);
+  }
+
+  return records;
+}

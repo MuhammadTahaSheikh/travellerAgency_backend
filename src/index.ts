@@ -21,6 +21,10 @@ import notificationRoutes from './routes/notificationRoutes';
 import activityLogRoutes from './routes/activityLogRoutes';
 import settingsRoutes from './routes/settingsRoutes';
 import publicRoutes from './routes/publicRoutes';
+import vendorRoutes from './routes/vendorRoutes';
+import voucherRoutes from './routes/voucherRoutes';
+import checkInRoutes from './routes/checkInRoutes';
+import { startScheduler } from './services/schedulerService';
 
 dotenv.config();
 
@@ -31,9 +35,27 @@ if (!fs.existsSync(uploadDir)) {
 
 const app = express();
 
+const devOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?$/;
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'http://127.0.0.1:3000'],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const configured = process.env.FRONTEND_URL;
+      const allowed = [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        configured,
+      ].filter(Boolean) as string[];
+
+      if (
+        allowed.includes(origin) ||
+        (process.env.NODE_ENV !== 'production' && devOriginPattern.test(origin))
+      ) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -63,9 +85,14 @@ app.use('/api/users', userRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/activity-logs', activityLogRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/vouchers', voucherRoutes);
+app.use('/api/check-ins', checkInRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
+
+startScheduler();
 
 app.listen(config.port, () => {
   console.log(`Travel Agency API running on port ${config.port}`);

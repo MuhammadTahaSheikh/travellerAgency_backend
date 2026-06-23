@@ -48,3 +48,14 @@ export function applyDateFilter(
   if (range) where[field] = range;
   return where;
 }
+
+/** Serialize Prisma records for DeletedRecord audit storage */
+export function serializeForDeletedRecord(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => {
+    if (v !== null && typeof v === 'object' && typeof (v as { toNumber?: () => number }).toNumber === 'function') {
+      return Number(v);
+    }
+    if (v instanceof Date) return v.toISOString();
+    return v;
+  });
+}

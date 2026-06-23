@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import prisma from '../config/database';
 import { AuthRequest } from '../types';
-import { paginate, formatPagination } from '../utils/helpers';
+import { paginate, formatPagination, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 
@@ -97,7 +97,7 @@ export async function deletePackage(req: AuthRequest, res: Response) {
   if (!pkg) return res.status(404).json({ success: false, error: 'Package not found' });
 
   await prisma.deletedRecord.create({
-    data: { entity: 'Package', entityId: pkg.id, data: JSON.stringify(pkg), deletedBy: req.user?.id },
+    data: { entity: 'Package', entityId: pkg.id, data: serializeForDeletedRecord(pkg), deletedBy: req.user?.id },
   });
 
   await prisma.package.update({ where: { id: paramId(req) }, data: { isActive: false } });

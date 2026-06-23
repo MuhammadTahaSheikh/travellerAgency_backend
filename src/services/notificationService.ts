@@ -45,6 +45,16 @@ export async function createPaymentReminder(userId: string, invoiceNumber: strin
   );
 }
 
+export async function createCheckInReminder(userId: string, guestName: string, hotelName: string, checkInDate: Date) {
+  return createNotification(
+    userId,
+    'CHECK_IN_REMINDER',
+    'Check-in Reminder',
+    `Reminder: ${guestName} checks in at ${hotelName} tomorrow (${checkInDate.toLocaleDateString()}).`,
+    '/check-ins'
+  );
+}
+
 export async function createDueAlert(userId: string, message: string) {
   return createNotification(userId, 'DUE_ALERT', 'Due Alert', message);
 }
