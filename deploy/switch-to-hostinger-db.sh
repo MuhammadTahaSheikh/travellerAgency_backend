@@ -4,7 +4,7 @@
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/var/www/travel-agency-backend}"
-DB_HOST="${DB_HOST:-auth-db1535.hstgr.io}"
+DB_HOST="${DB_HOST:-82.197.82.42}"
 DB_NAME="${DB_NAME:-u916710688_travel_agency}"
 DB_USER="${DB_USER:-u916710688_travel_agency}"
 DB_PASS="${DB_PASS:-Limton123@}"
@@ -18,7 +18,7 @@ if ! mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "SELECT 1 AS o
   echo "ERROR: Cannot connect to Hostinger MySQL."
   echo "  1. hPanel → Websites → Databases → Remote MySQL"
   echo "  2. Add IP: 187.124.52.234  (or enable Any Host)"
-  echo "  3. Use hostname from Remote MySQL page (default: auth-db1535.hstgr.io)"
+echo "  3. Use MySQL IPv4 host: 82.197.82.42 (hostname may resolve to blocked IPv6)"
   echo "  4. Confirm DB password matches DB_PASS in this script"
   exit 1
 fi
