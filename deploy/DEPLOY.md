@@ -43,7 +43,41 @@ npm install && npx prisma generate && npx prisma db push && npm run build
 pm2 restart travel-agency-api
 ```
 
-## Frontend `.env` (production)
+## Use Hostinger MySQL (phpMyAdmin) instead of VPS local DB
+
+### Step 1 — Allow VPS to connect (required)
+
+In **hPanel**:
+
+1. **Websites** → your site → **Databases** → **Remote MySQL**
+2. Add this IP: **`187.124.52.234`**
+3. Select database: **`u916710688_travel_agency`**
+4. Click **Create**
+
+Note the **MySQL hostname** on that page (usually `auth-db1535.hstgr.io`).
+
+### Step 2 — Run switch on VPS
+
+```bash
+ssh root@187.124.52.234
+bash /var/www/travel-agency-backend/deploy/switch-to-hostinger-db.sh
+```
+
+This creates all tables, seeds users, and restarts the API.
+
+### Alternative — Import SQL via phpMyAdmin (if remote MySQL is slow)
+
+1. Download `deploy/hostinger-import.sql` from the server or project
+2. phpMyAdmin → `u916710688_travel_agency` → **Import** → choose file → **Go**
+3. Still complete **Step 1** so the live API can connect to Hostinger
+
+### Default logins after seed
+
+| Role | Email | Password |
+|------|-------|----------|
+| Super Admin | superadmin@travel.com | admin123 |
+| Admin | admin@travel.com | admin123 |
+
 
 ```env
 NEXT_PUBLIC_API_URL=https://travel-api.bestechvision.com/api
