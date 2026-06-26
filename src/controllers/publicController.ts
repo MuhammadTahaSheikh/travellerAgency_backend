@@ -45,7 +45,7 @@ export async function getPublicCompany(_req: unknown, res: Response) {
   return res.json({
     success: true,
     data: {
-      companyName: data.company_name || 'Moazin Travel Agency',
+      companyName: data.company_name || 'Huffaz Holiday',
       email: data.company_email || '',
       phone: data.company_phone || '',
       address: data.company_address || '',

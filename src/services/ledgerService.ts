@@ -6,7 +6,19 @@ type TxClient = Prisma.TransactionClient;
 
 export async function createJournalEntry(
   description: string,
-  lines: { accountId: string; debit?: number; credit?: number; description?: string }[],
+  lines: {
+    accountId: string;
+    debit?: number;
+    credit?: number;
+    description?: string;
+    currency?: 'PKR' | 'SAR';
+    exchangeRate?: number;
+    amountPkr?: number;
+    amountSar?: number;
+    paymentMethod?: string;
+    remarks?: string;
+    attachmentPath?: string;
+  }[],
   options?: { date?: Date; reference?: string; notes?: string; receiptPath?: string },
   tx?: TxClient
 ) {
@@ -32,6 +44,13 @@ export async function createJournalEntry(
             debit: line.debit || 0,
             credit: line.credit || 0,
             description: line.description,
+            currency: line.currency || 'PKR',
+            exchangeRate: line.exchangeRate,
+            amountPkr: line.amountPkr,
+            amountSar: line.amountSar,
+            paymentMethod: line.paymentMethod as import('@prisma/client').PaymentMethod | undefined,
+            remarks: line.remarks,
+            attachmentPath: line.attachmentPath,
           })),
         },
       },
@@ -40,9 +59,20 @@ export async function createJournalEntry(
 
     for (const line of lines) {
       const balanceChange = (line.debit || 0) - (line.credit || 0);
+      const pkrChange = line.amountPkr != null
+        ? (line.debit ? line.amountPkr : line.credit ? -line.amountPkr : 0)
+        : balanceChange;
+      const sarChange = line.amountSar != null
+        ? (line.debit ? line.amountSar : line.credit ? -line.amountSar : 0)
+        : 0;
+
       await client.account.update({
         where: { id: line.accountId },
-        data: { balance: { increment: balanceChange } },
+        data: {
+          balance: { increment: balanceChange },
+          balancePkr: { increment: pkrChange },
+          ...(line.amountSar != null ? { balanceSar: { increment: sarChange } } : {}),
+        },
       });
     }
 
@@ -78,11 +108,12 @@ export async function getOrCreateBankAccount() {
   return account;
 }
 
-export async function createCustomerAccount(customerId: string, customerName: string) {
-  const existing = await prisma.account.findFirst({ where: { customerId } });
+export async function createCustomerAccount(customerId: string, customerName: string, tx?: TxClient) {
+  const client = tx || prisma;
+  const existing = await client.account.findFirst({ where: { customerId } });
   if (existing) return existing;
 
-  return prisma.account.create({
+  return client.account.create({
     data: {
       name: `Customer: ${customerName}`,
       code: generateNumber('CUST'),
@@ -175,10 +206,82 @@ export async function getLedgerTransactions(filters?: {
   return prisma.transaction.findMany({
     where,
     include: {
-      account: true,
-      journalEntry: true,
+      account: {
+        include: {
+          customer: { select: { id: true, firstName: true, lastName: true, companyName: true, tradePartnerId: true, customerType: true } },
+          vendor: { select: { id: true, name: true, category: true } },
+        },
+      },
+      journalEntry: {
+        include: {
+          transactions: {
+            include: {
+              account: { select: { id: true, name: true, type: true, code: true } },
+            },
+          },
+        },
+      },
     },
-    orderBy: { journalEntry: { date: 'desc' } },
+    orderBy: [{ journalEntry: { date: 'asc' } }, { createdAt: 'asc' }],
+  });
+}
+
+export type CurrencyView = 'PKR' | 'SAR';
+
+function amountInCurrency(
+  t: { debit: unknown; credit: unknown; amountPkr: unknown; amountSar: unknown; currency?: string },
+  view: CurrencyView
+) {
+  const debit = Number(t.debit);
+  const credit = Number(t.credit);
+  if (view === 'SAR' && t.amountSar != null) {
+    return {
+      debit: debit > 0 ? Number(t.amountSar) : 0,
+      credit: credit > 0 ? Number(t.amountSar) : 0,
+    };
+  }
+  const pkr = t.amountPkr != null ? Number(t.amountPkr) : debit || credit;
+  return {
+    debit: debit > 0 ? pkr : 0,
+    credit: credit > 0 ? pkr : 0,
+  };
+}
+
+export function buildLedgerRows(
+  transactions: Awaited<ReturnType<typeof getLedgerTransactions>>,
+  currencyView: CurrencyView = 'PKR'
+) {
+  let runningBalance = 0;
+  let runningPkr = 0;
+  let runningSar = 0;
+
+  return transactions.map((t) => {
+    const { debit, credit } = amountInCurrency(t, currencyView);
+    const debitPkr = Number(t.amountPkr ?? t.debit);
+    const creditPkr = Number(t.amountPkr ?? t.credit);
+    const debitSar = Number(t.amountSar ?? 0);
+    const creditSar = Number(t.amountSar ?? 0);
+
+    runningBalance += debit - credit;
+    runningPkr += (Number(t.debit) > 0 ? debitPkr : 0) - (Number(t.credit) > 0 ? creditPkr : 0);
+    runningSar += (Number(t.debit) > 0 ? debitSar : 0) - (Number(t.credit) > 0 ? creditSar : 0);
+
+    const siblings = t.journalEntry.transactions.filter((s) => s.id !== t.id);
+    const bankAccount = siblings.find((s) => ['CASH', 'BANK'].includes(s.account.type))?.account;
+    const counterAccount = siblings[0]?.account;
+
+    return {
+      ...t,
+      debit,
+      credit,
+      displayCurrency: currencyView,
+      runningBalance,
+      runningBalancePkr: runningPkr,
+      runningBalanceSar: runningSar,
+      bankAccount: bankAccount || (['CASH', 'BANK'].includes(t.account.type) ? t.account : null),
+      counterAccount: counterAccount || null,
+      attachmentPath: t.attachmentPath || t.journalEntry.receiptPath,
+    };
   });
 }
 

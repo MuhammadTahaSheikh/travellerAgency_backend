@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { config } from './config';
@@ -24,9 +24,10 @@ import publicRoutes from './routes/publicRoutes';
 import vendorRoutes from './routes/vendorRoutes';
 import voucherRoutes from './routes/voucherRoutes';
 import checkInRoutes from './routes/checkInRoutes';
+import vendorPostingRoutes from './routes/vendorPostingRoutes';
+import approvalRoutes from './routes/approvalRoutes';
+import uploadRoutes from './routes/uploadRoutes';
 import { startScheduler } from './services/schedulerService';
-
-dotenv.config();
 
 const uploadDir = path.resolve(config.uploadDir);
 if (!fs.existsSync(uploadDir)) {
@@ -65,6 +66,11 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(uploadDir));
 
+const assetsDir = path.resolve(__dirname, '../assets');
+if (fs.existsSync(assetsDir)) {
+  app.use('/assets', express.static(assetsDir));
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ success: true, message: 'Travel Agency API is running', version: '1.0.0' });
 });
@@ -88,6 +94,9 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/check-ins', checkInRoutes);
+app.use('/api/vendor-postings', vendorPostingRoutes);
+app.use('/api/approvals', approvalRoutes);
+app.use('/api/upload', uploadRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

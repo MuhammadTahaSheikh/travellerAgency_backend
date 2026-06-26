@@ -8,16 +8,19 @@ const categoryToExpense: Record<VendorCategory, string> = {
   HOTEL: 'HOTEL',
   VISA: 'VISA',
   TICKETING: 'AIRLINE',
+  TRANSPORT: 'OTHER',
   OTHER: 'OTHER',
 };
 
 export function vendorCategoryFromService(serviceType: string): VendorCategory {
-  switch (serviceType) {
-    case 'HOTEL': return 'HOTEL';
-    case 'VISA': return 'VISA';
-    case 'TICKET': return 'TICKETING';
-    default: return 'OTHER';
-  }
+  const map: Record<string, VendorCategory> = {
+    HOTEL: 'HOTEL',
+    VISA: 'VISA',
+    TICKET: 'TICKETING',
+    TRANSPORT: 'TRANSPORT',
+    PACKAGE: 'OTHER',
+  };
+  return map[serviceType] || 'OTHER';
 }
 
 export async function createVendorAccount(vendorId: string, vendorName: string, tx?: TxClient) {
@@ -41,6 +44,7 @@ export async function getOrCreateVendorByCategory(category: VendorCategory, tx?:
     HOTEL: 'Default Hotel Vendor',
     VISA: 'Default Visa Vendor',
     TICKETING: 'Default Ticketing Vendor',
+    TRANSPORT: 'Default Transport Vendor',
     OTHER: 'Default Vendor',
   };
 

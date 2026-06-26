@@ -2,11 +2,19 @@ import prisma from '../config/database';
 import { Prisma } from '@prisma/client';
 import { generateNumber } from '../utils/helpers';
 import { createJournalEntry, createCustomerAccount } from './ledgerService';
+import { convertCurrency, getDefaultExchangeRate } from './currencyService';
+import { logoHtml, BRAND_NAME, BRAND_TAGLINE } from './documentBrand';
+import {
+  createVendorAccount,
+  getOrCreateVendorByCategory,
+  vendorCategoryFromService,
+} from './vendorService';
 
 type TxClient = Prisma.TransactionClient;
 
-async function getInvoicePrefix() {
-  const setting = await prisma.setting.findUnique({ where: { key: 'invoice_prefix' } });
+async function getInvoicePrefix(tx?: TxClient) {
+  const client = tx || prisma;
+  const setting = await client.setting.findUnique({ where: { key: 'invoice_prefix' } });
   return setting?.value || 'INV';
 }
 
@@ -28,8 +36,8 @@ async function getDefaultTemplate() {
       data: {
         name: 'Default Invoice',
         isDefault: true,
-        header: 'Moazin Travel Agency\nProfessional Travel Services',
-        footer: 'Thank you for choosing Moazin Travel!',
+        header: 'Huffaz Holiday\nProfessional Travel Services',
+        footer: 'Thank you for choosing Huffaz Holiday!',
         terms: 'Payment is due by the due date shown above. Late payments may incur additional charges.',
       },
     });
@@ -87,7 +95,7 @@ export async function generateInvoiceFromBooking(bookingId: string, dueDays = 14
   const subtotal = items.reduce((sum, i) => sum + i.amount, 0);
   const discount = Number(booking.discount);
   const totalAmount = subtotal - discount;
-  const prefix = await getInvoicePrefix();
+  const prefix = await getInvoicePrefix(tx);
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + dueDays);
 
@@ -107,7 +115,7 @@ export async function generateInvoiceFromBooking(bookingId: string, dueDays = 14
           quantity: i.quantity,
           unitPrice: i.unitPrice,
           amount: i.amount,
-          serviceType: i.serviceType as 'PACKAGE' | 'TICKET' | 'VISA' | 'HOTEL' | undefined,
+          serviceType: i.serviceType as 'PACKAGE' | 'TICKET' | 'VISA' | 'HOTEL' | 'TRANSPORT' | undefined,
         })),
       },
     },
@@ -131,17 +139,36 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
       customerAccount = await createCustomerAccount(
         invoice.customerId,
         `${invoice.customer?.firstName} ${invoice.customer?.lastName}`,
+        client,
       );
     }
 
     const incomeAccount = await getOrCreateIncomeAccount(client);
     const amount = Number(invoice.totalAmount);
+    const rate = await getDefaultExchangeRate();
+    const { amountSar } = convertCurrency(amount, 'PKR', rate);
 
     const entry = await createJournalEntry(
       `Invoice confirmed: ${invoice.invoiceNumber}`,
       [
-        { accountId: customerAccount.id, debit: amount, description: 'Customer receivable' },
-        { accountId: incomeAccount.id, credit: amount, description: 'Revenue recognized' },
+        {
+          accountId: customerAccount.id,
+          debit: amount,
+          description: 'Customer receivable',
+          currency: 'PKR',
+          amountPkr: amount,
+          amountSar,
+          exchangeRate: rate,
+        },
+        {
+          accountId: incomeAccount.id,
+          credit: amount,
+          description: 'Revenue recognized',
+          currency: 'PKR',
+          amountPkr: amount,
+          amountSar,
+          exchangeRate: rate,
+        },
       ],
       { reference: invoice.invoiceNumber },
       client,
@@ -158,7 +185,7 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
   return prisma.$transaction(run);
 }
 
-export async function renderInvoiceHtml(invoiceId: string) {
+export async function renderInvoiceHtml(invoiceId: string, baseUrl?: string) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: {
@@ -178,20 +205,28 @@ export async function renderInvoiceHtml(invoiceId: string) {
     )
     .join('');
 
+  const billTo = invoice.customer?.customerType === 'B2B' && invoice.customer.companyName
+    ? `<strong>${invoice.customer.companyName}</strong>${invoice.customer.tradePartnerId ? `<br>Trade Partner: ${invoice.customer.tradePartnerId}` : ''}`
+    : `<strong>${invoice.customer?.firstName} ${invoice.customer?.lastName}</strong>`;
+
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Invoice ${invoice.invoiceNumber}</title>
 <style>
   body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; color: #1e293b; }
-  .header { border-bottom: 2px solid #0d9488; padding-bottom: 16px; margin-bottom: 24px; white-space: pre-line; }
+  .header { border-bottom: 2px solid #0d9488; padding-bottom: 16px; margin-bottom: 24px; }
   table { width: 100%; border-collapse: collapse; margin: 24px 0; }
   th, td { border: 1px solid #e2e8f0; padding: 10px; }
   th { background: #f1f5f9; text-align: left; }
   .totals { text-align: right; margin-top: 16px; }
   .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; white-space: pre-line; color: #64748b; font-size: 14px; }
 </style></head><body>
-<div class="header">${template.header}</div>
+<div class="header">
+  <div style="margin-bottom:12px">${logoHtml(baseUrl, BRAND_NAME)}</div>
+  <strong style="font-size:18px;color:#0d9488">${BRAND_NAME}</strong><br>
+  <span style="color:#64748b">${BRAND_TAGLINE}</span>
+</div>
 <h2>INVOICE ${invoice.invoiceNumber}</h2>
-<p><strong>Bill To:</strong> ${invoice.customer?.firstName} ${invoice.customer?.lastName}<br>
+<p><strong>Bill To:</strong> ${billTo}<br>
 ${invoice.customer?.phone || ''} ${invoice.customer?.email ? `| ${invoice.customer.email}` : ''}</p>
 <p><strong>Issue Date:</strong> ${new Date(invoice.issueDate).toLocaleDateString()}<br>
 <strong>Due Date:</strong> ${new Date(invoice.dueDate).toLocaleDateString()}<br>
@@ -231,7 +266,6 @@ export async function allocateVendorCosts(bookingId: string, tx?: TxClient) {
       const cost = Number(item.costAmount);
       if (cost <= 0) continue;
 
-      const { getOrCreateVendorByCategory, createVendorAccount, vendorCategoryFromService } = await import('./vendorService');
       const vendorRecord = item.vendor || (await getOrCreateVendorByCategory(vendorCategoryFromService(item.serviceType), client));
       const vendorWithAccount = await client.vendor.findUnique({
         where: { id: vendorRecord.id },

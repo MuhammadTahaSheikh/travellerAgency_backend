@@ -11,7 +11,9 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:create-super-admin": "tsx scripts/create-super-admin.ts",
+    "db:studio": "prisma studio",
+    "db:reconcile": "node scripts/reconcile-account-balances.js"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -24,6 +26,7 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.1",
+    "nodemailer": "^9.0.1",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
@@ -33,6 +36,7 @@
     "@types/jsonwebtoken": "^9.0.9",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.15.29",
+    "@types/nodemailer": "^8.0.1",
     "@types/uuid": "^10.0.0",
     "prisma": "^6.9.0",
     "tsx": "^4.19.4",

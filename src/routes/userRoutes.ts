@@ -7,10 +7,12 @@ const router = Router();
 router.use(authenticate);
 router.get('/roles', user.getRoles);
 router.get('/permissions', authorize('SUPER_ADMIN'), user.getPermissions);
+router.post('/invite', authorize('SUPER_ADMIN'), user.inviteUser);
 router.get('/', authorizeMinRole('ADMIN'), user.getUsers);
 router.get('/:id', authorizeMinRole('ADMIN'), user.getUser);
 router.put('/:id', authorizeMinRole('ADMIN'), user.updateUser);
 router.delete('/:id', authorize('SUPER_ADMIN'), user.deleteUser);
 router.post('/:id/reset-password', authorize('SUPER_ADMIN'), user.resetUserPassword);
+router.post('/:id/resend-invite', authorize('SUPER_ADMIN'), user.resendInvite);
 
 export default router;

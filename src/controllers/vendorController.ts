@@ -5,6 +5,9 @@ import { paginate, formatPagination, generateNumber } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createVendorAccount } from '../services/vendorService';
+import { createJournalEntry } from '../services/ledgerService';
+import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
+import { getLedgerTransactions, buildLedgerRows } from '../services/ledgerService';
 
 export async function getVendors(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
@@ -78,6 +81,104 @@ export async function deleteVendor(req: AuthRequest, res: Response) {
   await prisma.vendor.update({ where: { id: paramId(req) }, data: { isActive: false } });
   await logActivity(req, 'DELETE', 'Vendor', paramId(req));
   return res.json({ success: true, message: 'Vendor deactivated' });
+}
+
+export async function getVendorLedger(req: AuthRequest, res: Response) {
+  const currency = req.query.currency === 'SAR' ? 'SAR' : 'PKR';
+  const vendor = await prisma.vendor.findUnique({
+    where: { id: paramId(req) },
+    include: { account: true },
+  });
+  if (!vendor?.account) return res.status(404).json({ success: false, error: 'Vendor account not found' });
+
+  const transactions = await getLedgerTransactions({ accountId: vendor.account.id });
+  const rows = buildLedgerRows(transactions, currency).reverse();
+
+  return res.json({
+    success: true,
+    data: {
+      vendor,
+      currency,
+      balancePkr: Number(vendor.account.balancePkr),
+      balanceSar: Number(vendor.account.balanceSar),
+      balance: Number(vendor.account.balance),
+      transactions: rows,
+    },
+  });
+}
+
+export async function payVendor(req: AuthRequest, res: Response) {
+  const { accountId, amount, currency, exchangeRate, method, reference, notes, attachmentPath } = req.body;
+
+  if (!accountId || !amount) {
+    return res.status(400).json({ success: false, error: 'Bank/cash account and amount are required' });
+  }
+
+  const payAmount = Number(amount);
+  if (payAmount <= 0) {
+    return res.status(400).json({ success: false, error: 'Amount must be greater than zero' });
+  }
+
+  const vendor = await prisma.vendor.findUnique({
+    where: { id: paramId(req) },
+    include: { account: true },
+  });
+  if (!vendor?.account) return res.status(404).json({ success: false, error: 'Vendor account not found' });
+
+  const bankAccount = await prisma.account.findUnique({ where: { id: accountId } });
+  if (!bankAccount || !['CASH', 'BANK'].includes(bankAccount.type)) {
+    return res.status(400).json({ success: false, error: 'Payment must be from a Cash or Bank account' });
+  }
+
+  const payCurrency: 'PKR' | 'SAR' = currency === 'SAR' ? 'SAR' : 'PKR';
+  const rate = exchangeRate ? Number(exchangeRate) : await getDefaultExchangeRate();
+  const { amountPkr, amountSar } = convertCurrency(payAmount, payCurrency, rate);
+
+  const entry = await createJournalEntry(
+    `Vendor payment: ${vendor.name}`,
+    [
+      {
+        accountId: vendor.account.id,
+        debit: payAmount,
+        description: `Payment to ${vendor.name}`,
+        currency: payCurrency,
+        exchangeRate: rate,
+        amountPkr,
+        amountSar,
+        paymentMethod: method || 'BANK_TRANSFER',
+        remarks: notes,
+        attachmentPath,
+      },
+      {
+        accountId: bankAccount.id,
+        credit: payAmount,
+        description: `Paid from ${bankAccount.name}`,
+        currency: payCurrency,
+        exchangeRate: rate,
+        amountPkr,
+        amountSar,
+        paymentMethod: method || 'BANK_TRANSFER',
+        attachmentPath,
+      },
+    ],
+    { reference: reference || vendor.name, receiptPath: attachmentPath, notes }
+  );
+
+  await prisma.expense.create({
+    data: {
+      expenseNumber: generateNumber('EXP'),
+      category: 'OTHER',
+      accountId: bankAccount.id,
+      amount: payAmount,
+      description: `Vendor payment: ${vendor.name}`,
+      vendorId: vendor.id,
+      receiptPath: attachmentPath,
+      createdById: req.user!.id,
+    },
+  });
+
+  await logActivity(req, 'CREATE', 'VendorPayment', vendor.id, `Paid ${payAmount} ${payCurrency}`);
+  return res.status(201).json({ success: true, data: { journalEntry: entry, vendor }, message: 'Vendor payment recorded' });
 }
 
 export async function getVendorPayables(_req: AuthRequest, res: Response) {

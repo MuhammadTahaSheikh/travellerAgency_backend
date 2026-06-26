@@ -143,24 +143,40 @@ export async function createBooking(req: AuthRequest, res: Response) {
 
   await logActivity(req, 'CREATE', 'Booking', booking.id);
 
+  let invoice = null;
   if (booking.status === 'CONFIRMED') {
-    await handleBookingConfirmed(booking.id, req.user!.id);
+    try {
+      invoice = await handleBookingConfirmed(booking.id, req.user!.id);
+    } catch (err) {
+      await prisma.booking.update({ where: { id: booking.id }, data: { status: 'PENDING' } });
+      const message = err instanceof Error ? err.message : 'Failed to confirm booking';
+      return res.status(500).json({ success: false, error: `Booking saved as pending: ${message}` });
+    }
   }
 
-  return res.status(201).json({ success: true, data: booking });
+  return res.status(201).json({ success: true, data: booking, invoice });
 }
 
 async function handleBookingConfirmed(bookingId: string, userId: string) {
   const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
-  if (!booking) return;
+  if (!booking) return null;
 
   await createBookingConfirmation(userId, booking.bookingNumber);
 
-  await prisma.$transaction(async (tx) => {
-    const invoice = await generateInvoiceFromBooking(bookingId, 14, tx);
-    await confirmInvoice(invoice.id, tx);
-    await allocateVendorCosts(bookingId, tx);
-    await createCheckInsFromBooking(bookingId, tx);
+  let invoice;
+  await prisma.$transaction(
+    async (tx) => {
+      invoice = await generateInvoiceFromBooking(bookingId, 14, tx);
+      await confirmInvoice(invoice.id, tx);
+      await allocateVendorCosts(bookingId, tx);
+      await createCheckInsFromBooking(bookingId, tx);
+    },
+    { maxWait: 10000, timeout: 60000 },
+  );
+
+  return prisma.invoice.findUnique({
+    where: { id: invoice!.id },
+    include: { customer: true, booking: true, items: true },
   });
 }
 
@@ -210,11 +226,18 @@ export async function updateBooking(req: AuthRequest, res: Response) {
 
   await logActivity(req, 'UPDATE', 'Booking', booking.id, `Status: ${oldBooking?.status} -> ${booking.status}`);
 
+  let invoice = null;
   if (oldBooking?.status !== 'CONFIRMED' && booking.status === 'CONFIRMED') {
-    await handleBookingConfirmed(booking.id, req.user!.id);
+    try {
+      invoice = await handleBookingConfirmed(booking.id, req.user!.id);
+    } catch (err) {
+      await prisma.booking.update({ where: { id: booking.id }, data: { status: oldBooking?.status || 'PENDING' } });
+      const message = err instanceof Error ? err.message : 'Failed to confirm booking';
+      return res.status(500).json({ success: false, error: `Booking confirmation failed: ${message}` });
+    }
   }
 
-  return res.json({ success: true, data: booking });
+  return res.json({ success: true, data: booking, invoice });
 }
 
 export async function deleteBooking(req: AuthRequest, res: Response) {

@@ -6,6 +6,7 @@ import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createPaymentReminder } from '../services/notificationService';
 import { confirmInvoice, renderInvoiceHtml } from '../services/invoiceService';
+import { createVendorPosting } from '../services/vendorPostingService';
 
 async function getInvoicePrefix() {
   const setting = await prisma.setting.findUnique({ where: { key: 'invoice_prefix' } });
@@ -66,37 +67,89 @@ export async function createInvoice(req: AuthRequest, res: Response) {
   const totalAmount = Number(subtotal) + Number(tax || 0) - Number(discount || 0);
   const prefix = await getInvoicePrefix();
 
-  const invoice = await prisma.invoice.create({
-    data: {
-      invoiceNumber: generateNumber(prefix),
-      bookingId,
-      customerId,
-      subtotal,
-      tax: tax || 0,
-      discount: discount || 0,
-      totalAmount,
-      dueDate: new Date(dueDate),
-      notes,
-      status: 'SENT',
-      items: items?.length
-        ? {
-            create: items.map((i: { description: string; quantity?: number; unitPrice: number; amount: number; serviceType?: string }) => ({
-              description: i.description,
-              quantity: i.quantity || 1,
-              unitPrice: i.unitPrice,
-              amount: i.amount,
-              serviceType: i.serviceType,
-            })),
-          }
-        : undefined,
-    },
-    include: { customer: true, booking: true, items: true },
+  const invoice = await prisma.$transaction(async (tx) => {
+    const created = await tx.invoice.create({
+      data: {
+        invoiceNumber: generateNumber(prefix),
+        bookingId,
+        customerId,
+        subtotal,
+        tax: tax || 0,
+        discount: discount || 0,
+        totalAmount,
+        dueDate: new Date(dueDate),
+        notes,
+        status: 'SENT',
+        items: items?.length
+          ? {
+              create: items.map((i: {
+                description: string;
+                quantity?: number;
+                unitPrice: number;
+                amount: number;
+                serviceType?: string;
+                costAmount?: number;
+                vendorId?: string;
+                details?: Record<string, string>;
+                postingType?: 'INSTANT' | 'PENDING';
+                dueDate?: string;
+              }) => ({
+                description: i.description,
+                quantity: i.quantity || 1,
+                unitPrice: i.unitPrice,
+                amount: i.amount,
+                serviceType: i.serviceType,
+                costAmount: i.costAmount || 0,
+                vendorId: i.vendorId,
+                details: i.details,
+              })),
+            }
+          : undefined,
+      },
+      include: { customer: true, booking: true, items: true },
+    });
+
+    for (const item of created.items) {
+      const cost = Number(item.costAmount);
+      if (cost <= 0) continue;
+
+      const sourceItem = items?.find((i: { description: string }) => i.description === item.description);
+      const postingType = sourceItem?.postingType || (sourceItem?.vendorId ? 'INSTANT' : 'PENDING');
+
+      await createVendorPosting(
+        {
+          invoiceId: created.id,
+          bookingId: bookingId || undefined,
+          invoiceItemId: item.id,
+          vendorId: item.vendorId || sourceItem?.vendorId,
+          serviceType: item.serviceType || 'HOTEL',
+          description: item.description,
+          expectedCost: cost,
+          postingType,
+          dueDate: sourceItem?.dueDate ? new Date(sourceItem.dueDate) : undefined,
+        },
+        tx
+      );
+    }
+
+    return created;
   });
+
+  try {
+    await confirmInvoice(invoice.id);
+  } catch {
+    // Already confirmed or ledger issue — invoice still created
+  }
 
   await createPaymentReminder(req.user!.id, invoice.invoiceNumber, invoice.dueDate);
   await logActivity(req, 'CREATE', 'Invoice', invoice.id);
 
-  return res.status(201).json({ success: true, data: invoice });
+  const full = await prisma.invoice.findUnique({
+    where: { id: invoice.id },
+    include: { customer: true, booking: true, items: true, vendorPostings: { include: { vendor: true } } },
+  });
+
+  return res.status(201).json({ success: true, data: full });
 }
 
 export async function confirmInvoiceHandler(req: AuthRequest, res: Response) {
@@ -112,7 +165,8 @@ export async function confirmInvoiceHandler(req: AuthRequest, res: Response) {
 
 export async function getInvoiceHtml(req: AuthRequest, res: Response) {
   try {
-    const html = await renderInvoiceHtml(paramId(req));
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const html = await renderInvoiceHtml(paramId(req), baseUrl);
     res.setHeader('Content-Type', 'text/html');
     return res.send(html);
   } catch (err) {

@@ -12,5 +12,8 @@ router.get('/cash-flow', report.getCashFlowReport);
 router.get('/expenses', report.getExpenseReport);
 router.get('/customer-outstanding', report.getCustomerOutstanding);
 router.get('/daily-collection', report.getDailyCollectionReport);
+router.get('/customer-statement', report.getCustomerStatement);
+router.get('/customer-statement/html', report.getCustomerStatementHtml);
+router.get('/b2b-partners', report.getB2BPartnerReport);
 
 export default router;

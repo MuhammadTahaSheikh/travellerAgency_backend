@@ -9,7 +9,7 @@ DB_NAME="${DB_NAME:-travel_agency}"
 DB_USER="${DB_USER:-travel_user}"
 REPO_URL="${REPO_URL:-https://github.com/MuhammadTahaSheikh/travellerAgency_backend.git}"
 DOMAIN="${DOMAIN:-travel-api.bestechvision.com}"
-FRONTEND_URL="${FRONTEND_URL:-https://travel.bestechvision.com}"
+FRONTEND_URL="${FRONTEND_URL:-https://traveller-agency-frontend.vercel.app}"
 
 echo "==> App directory: $APP_DIR"
 

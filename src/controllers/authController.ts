@@ -20,6 +20,13 @@ export async function login(req: AuthRequest, res: Response) {
     return res.status(401).json({ success: false, error: 'Invalid credentials' });
   }
 
+  if (user.inviteToken) {
+    return res.status(403).json({
+      success: false,
+      error: 'Please set your password using the invite link sent to your email before logging in.',
+    });
+  }
+
   const valid = await comparePassword(password, user.password);
   if (!valid) {
     await prisma.loginHistory.create({
@@ -37,6 +44,7 @@ export async function login(req: AuthRequest, res: Response) {
     email: user.email,
     firstName: user.firstName,
     lastName: user.lastName,
+    phone: user.phone,
     role: user.role.name,
     roleId: user.roleId,
   };
@@ -138,4 +146,49 @@ export async function getLoginHistory(req: AuthRequest, res: Response) {
     take: 50,
   });
   return res.json({ success: true, data: history });
+}
+
+export async function validateInvite(req: AuthRequest, res: Response) {
+  const token = req.params.token as string;
+  if (!token) {
+    return res.status(400).json({ success: false, error: 'Invite token required' });
+  }
+
+  const { validateInviteToken } = await import('../services/inviteService');
+  const result = await validateInviteToken(token);
+
+  if (!result.valid) {
+    return res.status(400).json({ success: false, error: result.error });
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      email: result.user.email,
+      firstName: result.user.firstName,
+      lastName: result.user.lastName,
+      role: result.user.role.name,
+    },
+  });
+}
+
+export async function setupPassword(req: AuthRequest, res: Response) {
+  const { token, password, confirmPassword } = req.body;
+
+  if (!token || !password) {
+    return res.status(400).json({ success: false, error: 'Token and password are required' });
+  }
+
+  if (password !== confirmPassword) {
+    return res.status(400).json({ success: false, error: 'Passwords do not match' });
+  }
+
+  try {
+    const { completeInviteSetup } = await import('../services/inviteService');
+    const user = await completeInviteSetup(token, password);
+    return res.json({ success: true, data: user, message: 'Password set successfully. You can now log in.' });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to set password';
+    return res.status(400).json({ success: false, error: message });
+  }
 }

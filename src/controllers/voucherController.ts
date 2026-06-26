@@ -17,6 +17,7 @@ export async function getVouchers(req: AuthRequest, res: Response) {
       include: {
         booking: { include: { customer: true } },
         payment: true,
+        invoice: { select: { id: true, invoiceNumber: true } },
       },
     }),
     prisma.voucher.count(),
@@ -43,9 +44,10 @@ export async function createVoucher(req: AuthRequest, res: Response) {
   }
 
   try {
-    const voucher = await generateVoucherFromPayment(paymentId);
-    await logActivity(req, 'CREATE', 'Voucher', voucher.id);
-    return res.status(201).json({ success: true, data: voucher });
+    const vouchers = await generateVoucherFromPayment(paymentId);
+    const first = vouchers[0];
+    if (first) await logActivity(req, 'CREATE', 'Voucher', first.id);
+    return res.status(201).json({ success: true, data: vouchers });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to create voucher';
     return res.status(400).json({ success: false, error: message });
@@ -54,7 +56,8 @@ export async function createVoucher(req: AuthRequest, res: Response) {
 
 export async function getVoucherHtml(req: AuthRequest, res: Response) {
   try {
-    const html = await renderVoucherHtml(paramId(req));
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const html = await renderVoucherHtml(paramId(req), undefined, baseUrl);
     res.setHeader('Content-Type', 'text/html');
     return res.send(html);
   } catch (err) {

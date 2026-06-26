@@ -6,34 +6,82 @@ import { paramId } from '../utils/params';
 import {
   createJournalEntry,
   getLedgerTransactions,
-  getTrialBalance,
+  buildLedgerRows,
+  CurrencyView,
 } from '../services/ledgerService';
 import { logActivity } from '../middleware/activityLogger';
 
 export async function getAccounts(req: AuthRequest, res: Response) {
   const accounts = await prisma.account.findMany({
     where: { isActive: true },
-    include: { customer: true, employee: { select: { firstName: true, lastName: true } } },
+    include: {
+      customer: { select: { id: true, firstName: true, lastName: true, phone: true, companyName: true, tradePartnerId: true, customerType: true } },
+      vendor: { select: { id: true, name: true, category: true } },
+      employee: { select: { id: true, firstName: true, lastName: true } },
+    },
     orderBy: { name: 'asc' },
   });
-  return res.json({ success: true, data: accounts });
+
+  type AccountRow = (typeof accounts)[number];
+  const company: AccountRow[] = [];
+  const customers: AccountRow[] = [];
+  const vendors: AccountRow[] = [];
+  const employees: AccountRow[] = [];
+
+  for (const acc of accounts) {
+    if (acc.customerId) customers.push(acc);
+    else if (acc.vendorId) vendors.push(acc);
+    else if (acc.employeeId) employees.push(acc);
+    else company.push(acc);
+  }
+
+  const sumBalance = (list: AccountRow[], field: 'balance' | 'balancePkr' | 'balanceSar' = 'balance') =>
+    list.reduce((s, a) => s + Number(a[field]), 0);
+
+  return res.json({
+    success: true,
+    data: accounts,
+    grouped: {
+      company: { label: 'Company (Agency)', accounts: company, totalBalance: sumBalance(company), totalBalancePkr: sumBalance(company, 'balancePkr'), totalBalanceSar: sumBalance(company, 'balanceSar') },
+      customers: { label: 'Customers', accounts: customers, totalBalance: sumBalance(customers), totalBalancePkr: sumBalance(customers, 'balancePkr'), totalBalanceSar: sumBalance(customers, 'balanceSar') },
+      vendors: { label: 'Vendors', accounts: vendors, totalBalance: sumBalance(vendors), totalBalancePkr: sumBalance(vendors, 'balancePkr'), totalBalanceSar: sumBalance(vendors, 'balanceSar') },
+      employees: { label: 'Employees', accounts: employees, totalBalance: sumBalance(employees), totalBalancePkr: sumBalance(employees, 'balancePkr'), totalBalanceSar: sumBalance(employees, 'balanceSar') },
+    },
+  });
 }
 
 export async function getAccountTransactions(req: AuthRequest, res: Response) {
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, currency } = req.query;
+  const currencyView: CurrencyView = currency === 'SAR' ? 'SAR' : 'PKR';
+
+  const account = await prisma.account.findUnique({
+    where: { id: paramId(req) },
+    include: {
+      customer: true,
+      vendor: true,
+    },
+  });
+  if (!account) return res.status(404).json({ success: false, error: 'Account not found' });
+
   const transactions = await getLedgerTransactions({
     accountId: paramId(req),
     startDate: startDate ? new Date(startDate as string) : undefined,
     endDate: endDate ? new Date(endDate as string) : undefined,
   });
 
-  let runningBalance = 0;
-  const withBalance = transactions.map((t) => {
-    runningBalance += Number(t.debit) - Number(t.credit);
-    return { ...t, runningBalance };
-  });
+  const rows = buildLedgerRows(transactions, currencyView).reverse();
 
-  return res.json({ success: true, data: withBalance });
+  return res.json({
+    success: true,
+    data: {
+      account,
+      currency: currencyView,
+      balancePkr: Number(account.balancePkr),
+      balanceSar: Number(account.balanceSar),
+      balance: Number(account.balance),
+      transactions: rows,
+    },
+  });
 }
 
 export async function getJournalEntries(req: AuthRequest, res: Response) {
@@ -70,20 +118,82 @@ export async function createJournalEntryHandler(req: AuthRequest, res: Response)
 }
 
 export async function getGeneralLedger(req: AuthRequest, res: Response) {
-  const { startDate, endDate, accountId } = req.query;
+  const { startDate, endDate, accountId, currency } = req.query;
+  const currencyView: CurrencyView = currency === 'SAR' ? 'SAR' : 'PKR';
+
   const transactions = await getLedgerTransactions({
     accountId: accountId as string,
     startDate: startDate ? new Date(startDate as string) : undefined,
     endDate: endDate ? new Date(endDate as string) : undefined,
   });
-  return res.json({ success: true, data: transactions });
+
+  const rows = buildLedgerRows(transactions, currencyView).reverse();
+  return res.json({ success: true, data: rows, currency: currencyView });
 }
 
 export async function getTrialBalanceReport(_req: AuthRequest, res: Response) {
-  const balance = await getTrialBalance();
-  const totalDebit = balance.reduce((s, b) => s + b.debit, 0);
-  const totalCredit = balance.reduce((s, b) => s + b.credit, 0);
-  return res.json({ success: true, data: { accounts: balance, totalDebit, totalCredit } });
+  const accounts = await prisma.account.findMany({
+    where: { isActive: true },
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      type: true,
+      balance: true,
+      balancePkr: true,
+      balanceSar: true,
+      customerId: true,
+      vendorId: true,
+      employeeId: true,
+    },
+    orderBy: { name: 'asc' },
+  });
+
+  const rows = accounts.map((acc) => ({
+    accountId: acc.id,
+    accountName: acc.name,
+    accountCode: acc.code,
+    accountType: acc.type,
+    customerId: acc.customerId,
+    vendorId: acc.vendorId,
+    employeeId: acc.employeeId,
+    debit: Number(acc.balance) > 0 ? Number(acc.balance) : 0,
+    credit: Number(acc.balance) < 0 ? Math.abs(Number(acc.balance)) : 0,
+    balance: Number(acc.balance),
+  }));
+
+  const groupKey = (r: (typeof rows)[number]) => {
+    if (r.customerId) return 'customers';
+    if (r.vendorId) return 'vendors';
+    if (r.employeeId) return 'employees';
+    return 'company';
+  };
+
+  const grouped: Record<string, typeof rows> = {
+    company: [],
+    customers: [],
+    vendors: [],
+    employees: [],
+  };
+  rows.forEach((r) => grouped[groupKey(r)].push(r));
+
+  const totalDebit = rows.reduce((s, b) => s + b.debit, 0);
+  const totalCredit = rows.reduce((s, b) => s + b.credit, 0);
+
+  return res.json({
+    success: true,
+    data: {
+      accounts: rows,
+      grouped: {
+        company: { label: 'Company (Agency)', accounts: grouped.company },
+        customers: { label: 'Customers', accounts: grouped.customers },
+        vendors: { label: 'Vendors', accounts: grouped.vendors },
+        employees: { label: 'Employees', accounts: grouped.employees },
+      },
+      totalDebit,
+      totalCredit,
+    },
+  });
 }
 
 export async function deleteJournalEntry(req: AuthRequest, res: Response) {

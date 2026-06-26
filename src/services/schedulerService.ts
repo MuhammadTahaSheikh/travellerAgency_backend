@@ -26,7 +26,10 @@ export async function processCheckInReminders() {
 
   let sent = 0;
   for (const checkIn of checkIns) {
-    const guest = checkIn.guestName || `${checkIn.booking.customer.firstName} ${checkIn.booking.customer.lastName}`;
+    if (!checkIn.checkInDate || !checkIn.hotelName) continue;
+    const guest = checkIn.guestName || (checkIn.booking
+      ? `${checkIn.booking.customer.firstName} ${checkIn.booking.customer.lastName}`
+      : 'Guest');
     const message = `Reminder: ${guest} checks in at ${checkIn.hotelName} tomorrow (${checkIn.checkInDate.toLocaleDateString()}).`;
 
     for (const user of users) {
@@ -41,6 +44,54 @@ export async function processCheckInReminders() {
 
     await prisma.checkInRecord.update({
       where: { id: checkIn.id },
+      data: { reminderSent: true },
+    });
+    sent++;
+  }
+
+  return sent;
+}
+
+export async function processVendorPostingReminders() {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const start = new Date(tomorrow);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(tomorrow);
+  end.setHours(23, 59, 59, 999);
+
+  const postings = await prisma.vendorPosting.findMany({
+    where: {
+      status: 'PENDING',
+      dueDate: { gte: start, lte: end },
+      reminderSent: false,
+    },
+    include: { vendor: true, invoice: { include: { customer: true } } },
+  });
+
+  if (postings.length === 0) return 0;
+
+  const users = await prisma.user.findMany({
+    where: { isActive: true, role: { name: { in: ['SUPER_ADMIN', 'ADMIN'] } } },
+    select: { id: true },
+  });
+
+  let sent = 0;
+  for (const posting of postings) {
+    const customer = posting.invoice?.customer;
+    const customerLabel = customer
+      ? customer.customerType === 'B2B'
+        ? customer.companyName
+        : `${customer.firstName} ${customer.lastName}`
+      : 'Customer';
+    const message = `Vendor posting due tomorrow: ${posting.description} (${customerLabel}) — expected ${Number(posting.expectedCost).toLocaleString()} ${posting.currency}`;
+
+    for (const user of users) {
+      await createNotification(user.id, 'DUE_ALERT', 'Vendor Posting Due', message, '/vendor-postings');
+    }
+
+    await prisma.vendorPosting.update({
+      where: { id: posting.id },
       data: { reminderSent: true },
     });
     sent++;
@@ -73,9 +124,10 @@ export function startScheduler() {
   const run = async () => {
     try {
       const reminders = await processCheckInReminders();
+      const vendorReminders = await processVendorPostingReminders();
       const overdue = await processOverdueInvoices();
-      if (reminders > 0 || overdue > 0) {
-        console.log(`Scheduler: ${reminders} check-in reminder(s), ${overdue} overdue invoice(s) updated`);
+      if (reminders > 0 || vendorReminders > 0 || overdue > 0) {
+        console.log(`Scheduler: ${reminders} check-in reminder(s), ${vendorReminders} vendor posting reminder(s), ${overdue} overdue invoice(s) updated`);
       }
     } catch (err) {
       console.error('Scheduler error:', err);

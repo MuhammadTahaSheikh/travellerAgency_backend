@@ -7,6 +7,8 @@ const router = Router();
 router.use(authenticate);
 router.get('/', vendor.getVendors);
 router.get('/payables', vendor.getVendorPayables);
+router.get('/:id/ledger', vendor.getVendorLedger);
+router.post('/:id/pay', authorizeMinRole('ADMIN'), vendor.payVendor);
 router.get('/:id', vendor.getVendor);
 router.post('/', authorizeMinRole('ADMIN'), vendor.createVendor);
 router.put('/:id', authorizeMinRole('ADMIN'), vendor.updateVendor);

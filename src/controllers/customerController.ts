@@ -5,6 +5,9 @@ import { paginate, formatPagination, serializeForDeletedRecord } from '../utils/
 import { paramId } from '../utils/params';
 import { createCustomerAccount } from '../services/ledgerService';
 import { logActivity } from '../middleware/activityLogger';
+import { getNextTradePartnerId } from '../services/tradePartnerService';
+import { getLedgerTransactions, buildLedgerRows } from '../services/ledgerService';
+import { CustomerType } from '@prisma/client';
 
 export async function getCustomers(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
@@ -15,6 +18,8 @@ export async function getCustomers(req: AuthRequest, res: Response) {
         OR: [
           { firstName: { contains: search, mode: 'insensitive' as const } },
           { lastName: { contains: search, mode: 'insensitive' as const } },
+          { companyName: { contains: search, mode: 'insensitive' as const } },
+          { tradePartnerId: { contains: search, mode: 'insensitive' as const } },
           { email: { contains: search, mode: 'insensitive' as const } },
           { phone: { contains: search } },
         ],
@@ -55,18 +60,61 @@ export async function getCustomer(req: AuthRequest, res: Response) {
 }
 
 export async function createCustomer(req: AuthRequest, res: Response) {
-  const { firstName, lastName, email, phone, address, city, country, passportNo, nationalId, dateOfBirth, notes } =
-    req.body;
+  const {
+    customerType,
+    firstName,
+    lastName,
+    companyName,
+    contactPerson,
+    ntn,
+    email,
+    phone,
+    address,
+    city,
+    country,
+    passportNo,
+    nationalId,
+    dateOfBirth,
+    notes,
+  } = req.body;
 
-  if (!firstName || !lastName || !phone) {
+  const type: CustomerType = customerType === 'B2B' ? 'B2B' : 'B2C';
+
+  if (type === 'B2B') {
+    if (!companyName || !phone) {
+      return res.status(400).json({ success: false, error: 'Company name and phone are required for B2B customers' });
+    }
+  } else if (!firstName || !lastName || !phone) {
     return res.status(400).json({ success: false, error: 'First name, last name, and phone are required' });
   }
 
-  const customer = await prisma.customer.create({
-    data: { firstName, lastName, email, phone, address, city, country, passportNo, nationalId, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined, notes },
+  const customer = await prisma.$transaction(async (tx) => {
+    const tradePartnerId = type === 'B2B' ? await getNextTradePartnerId(tx) : undefined;
+
+    return tx.customer.create({
+      data: {
+        customerType: type,
+        firstName: firstName || companyName,
+        lastName: lastName || (type === 'B2B' ? 'Partner' : ''),
+        companyName: type === 'B2B' ? companyName : undefined,
+        contactPerson: type === 'B2B' ? contactPerson : undefined,
+        ntn: type === 'B2B' ? ntn : undefined,
+        tradePartnerId,
+        email,
+        phone,
+        address,
+        city,
+        country,
+        passportNo,
+        nationalId,
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+        notes,
+      },
+    });
   });
 
-  await createCustomerAccount(customer.id, `${firstName} ${lastName}`);
+  const displayName = type === 'B2B' ? companyName : `${firstName} ${lastName}`;
+  await createCustomerAccount(customer.id, displayName);
   await logActivity(req, 'CREATE', 'Customer', customer.id);
 
   return res.status(201).json({ success: true, data: customer });
@@ -136,13 +184,18 @@ export async function getCustomerLedger(req: AuthRequest, res: Response) {
   const outstanding = totalBilled - totalPaid;
 
   let transactions: unknown[] = [];
+  let ledgerDetail = null;
   if (customer.account) {
-    transactions = await prisma.transaction.findMany({
-      where: { accountId: customer.account.id },
-      include: { journalEntry: true },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
+    const currency = (req.query.currency as string) === 'SAR' ? 'SAR' : 'PKR';
+    const raw = await getLedgerTransactions({ accountId: customer.account.id });
+    const rows = buildLedgerRows(raw, currency).reverse();
+    transactions = rows.slice(0, 100);
+    ledgerDetail = {
+      currency,
+      balancePkr: Number(customer.account.balancePkr),
+      balanceSar: Number(customer.account.balanceSar),
+      balance: Number(customer.account.balance),
+    };
   }
 
   return res.json({
@@ -150,17 +203,25 @@ export async function getCustomerLedger(req: AuthRequest, res: Response) {
     data: {
       customer: {
         id: customer.id,
+        customerType: customer.customerType,
         firstName: customer.firstName,
         lastName: customer.lastName,
+        companyName: customer.companyName,
+        tradePartnerId: customer.tradePartnerId,
         phone: customer.phone,
         email: customer.email,
+        address: customer.address,
+        contactPerson: customer.contactPerson,
       },
       account: customer.account,
+      ledgerDetail,
       summary: {
         totalBilled,
         totalPaid,
         outstanding,
         ledgerBalance: Number(customer.account?.balance || 0),
+        ledgerBalancePkr: Number(customer.account?.balancePkr || 0),
+        ledgerBalanceSar: Number(customer.account?.balanceSar || 0),
       },
       invoices: customer.invoices,
       bookings: customer.bookings,

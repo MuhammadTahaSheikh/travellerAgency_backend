@@ -5,7 +5,8 @@ import { paginate, formatPagination, generateNumber, applyDateFilter, serializeF
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createJournalEntry, resolvePaymentCreditAccount, reverseJournalEntry } from '../services/ledgerService';
-import { generateVoucherFromPayment } from '../services/voucherService';
+import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
+import { createSchedulesFromInvoice } from '../services/scheduleService';
 
 export async function getPayments(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
@@ -40,7 +41,19 @@ export async function getPayments(req: AuthRequest, res: Response) {
 }
 
 export async function createPayment(req: AuthRequest, res: Response) {
-  const { invoiceId, accountId, amount, method, reference, notes, paymentDate, autoVerify } = req.body;
+  const {
+    invoiceId,
+    accountId,
+    amount,
+    currency,
+    exchangeRate,
+    method,
+    reference,
+    notes,
+    paymentDate,
+    autoVerify,
+    attachmentPath,
+  } = req.body;
 
   if (!amount || !accountId) {
     return res.status(400).json({ success: false, error: 'Amount and account are required' });
@@ -50,6 +63,10 @@ export async function createPayment(req: AuthRequest, res: Response) {
   if (paymentAmount <= 0) {
     return res.status(400).json({ success: false, error: 'Amount must be greater than zero' });
   }
+
+  const payCurrency: 'PKR' | 'SAR' = currency === 'SAR' ? 'SAR' : 'PKR';
+  const rate = exchangeRate ? Number(exchangeRate) : await getDefaultExchangeRate();
+  const { amountPkr, amountSar } = convertCurrency(paymentAmount, payCurrency, rate);
 
   try {
     const payment = await prisma.$transaction(async (tx) => {
@@ -67,9 +84,14 @@ export async function createPayment(req: AuthRequest, res: Response) {
           invoiceId: invoiceId || null,
           accountId,
           amount: paymentAmount,
+          currency: payCurrency,
+          exchangeRate: rate,
+          amountPkr,
+          amountSar,
           method: method || 'CASH',
           reference,
           notes,
+          attachmentPath,
           paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
           recordedById: req.user!.id,
           verificationStatus: verified ? 'VERIFIED' : 'PENDING',
@@ -88,7 +110,7 @@ export async function createPayment(req: AuthRequest, res: Response) {
             const status = newPaid >= Number(invoice.totalAmount) ? 'PAID' : 'PARTIAL';
             await tx.invoice.update({
               where: { id: invoiceId },
-              data: { paidAmount: newPaid, status },
+              data: { paidAmount: newPaid, status, approvalStatus: 'PENDING' },
             });
             if (invoice.bookingId) {
               await tx.booking.update({
@@ -103,10 +125,28 @@ export async function createPayment(req: AuthRequest, res: Response) {
         const entry = await createJournalEntry(
           `Payment received: ${pmt.paymentNumber}`,
           [
-            { accountId, debit: paymentAmount, description: 'Payment received' },
-            { accountId: creditAccount.id, credit: paymentAmount, description: 'Reduce receivable' },
+            {
+              accountId,
+              debit: paymentAmount,
+              description: 'Payment received',
+              currency: payCurrency,
+              exchangeRate: rate,
+              amountPkr,
+              amountSar,
+              paymentMethod: method || 'CASH',
+              attachmentPath,
+            },
+            {
+              accountId: creditAccount.id,
+              credit: paymentAmount,
+              description: 'Reduce receivable',
+              currency: payCurrency,
+              exchangeRate: rate,
+              amountPkr,
+              amountSar,
+            },
           ],
-          { reference: pmt.paymentNumber },
+          { reference: pmt.paymentNumber, receiptPath: attachmentPath },
           tx
         );
         journalEntryId = entry.id;
@@ -115,6 +155,10 @@ export async function createPayment(req: AuthRequest, res: Response) {
           where: { id: pmt.id },
           data: { journalEntryId },
         });
+
+        if (invoiceId) {
+          await createSchedulesFromInvoice(invoiceId, tx);
+        }
       }
 
       return { ...pmt, journalEntryId };
@@ -122,15 +166,13 @@ export async function createPayment(req: AuthRequest, res: Response) {
 
     await logActivity(req, 'CREATE', 'Payment', payment.id);
 
-    if (payment.verificationStatus === 'VERIFIED' && payment.invoiceId) {
-      try {
-        await generateVoucherFromPayment(payment.id);
-      } catch {
-        // Voucher only created when booking has hotel service
-      }
-    }
-
-    return res.status(201).json({ success: true, data: payment });
+    return res.status(201).json({
+      success: true,
+      data: payment,
+      message: payment.invoiceId
+        ? 'Payment recorded. Awaiting super admin approval for voucher issuance.'
+        : 'Payment recorded',
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to record payment';
     return res.status(400).json({ success: false, error: message });
@@ -157,7 +199,7 @@ export async function verifyPayment(req: AuthRequest, res: Response) {
         const status = newPaid >= Number(payment.invoice.totalAmount) ? 'PAID' : 'PARTIAL';
         await tx.invoice.update({
           where: { id: payment.invoiceId },
-          data: { paidAmount: newPaid, status },
+          data: { paidAmount: newPaid, status, approvalStatus: 'PENDING' },
         });
         if (payment.invoice.bookingId) {
           await tx.booking.update({
@@ -167,12 +209,33 @@ export async function verifyPayment(req: AuthRequest, res: Response) {
         }
       }
 
+      const payCurrency = payment.currency || 'PKR';
+      const rate = Number(payment.exchangeRate || await getDefaultExchangeRate());
+      const { amountPkr, amountSar } = convertCurrency(paymentAmount, payCurrency, rate);
+
       const creditAccount = await resolvePaymentCreditAccount(payment.invoiceId || undefined, tx);
       const entry = await createJournalEntry(
         `Payment verified: ${payment.paymentNumber}`,
         [
-          { accountId: payment.accountId, debit: paymentAmount, description: 'Payment received' },
-          { accountId: creditAccount.id, credit: paymentAmount, description: 'Reduce receivable' },
+          {
+            accountId: payment.accountId,
+            debit: paymentAmount,
+            description: 'Payment received',
+            currency: payCurrency,
+            exchangeRate: rate,
+            amountPkr,
+            amountSar,
+            paymentMethod: payment.method,
+          },
+          {
+            accountId: creditAccount.id,
+            credit: paymentAmount,
+            description: 'Reduce receivable',
+            currency: payCurrency,
+            exchangeRate: rate,
+            amountPkr,
+            amountSar,
+          },
         ],
         { reference: payment.paymentNumber },
         tx
@@ -191,13 +254,15 @@ export async function verifyPayment(req: AuthRequest, res: Response) {
 
     await logActivity(req, 'UPDATE', 'Payment', payment.id, 'Verified');
 
-    try {
-      await generateVoucherFromPayment(updated.id);
-    } catch {
-      // No hotel service on booking
+    if (payment.invoiceId) {
+      await createSchedulesFromInvoice(payment.invoiceId);
     }
 
-    return res.json({ success: true, data: updated, message: 'Payment verified' });
+    return res.json({
+      success: true,
+      data: updated,
+      message: 'Payment verified. Awaiting super admin approval for voucher issuance.',
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to verify payment';
     return res.status(400).json({ success: false, error: message });

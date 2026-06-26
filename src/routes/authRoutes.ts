@@ -5,6 +5,8 @@ import { authenticate, authorizeMinRole } from '../middleware/auth';
 const router = Router();
 
 router.post('/login', auth.login);
+router.get('/invite/:token', auth.validateInvite);
+router.post('/setup-password', auth.setupPassword);
 router.get('/profile', authenticate, auth.getProfile);
 router.put('/profile', authenticate, auth.updateProfile);
 router.put('/change-password', authenticate, auth.changePassword);

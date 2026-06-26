@@ -85,6 +85,33 @@ async function main() {
   const userRole = await prisma.role.findUnique({ where: { name: 'USER' } });
 
   const hashedPassword = await bcrypt.hash('admin123', 12);
+  const superAdminPassword = await bcrypt.hash(
+    process.env.SEED_SUPER_ADMIN_PASSWORD || 'Pakistan@123',
+    12,
+  );
+
+  await prisma.user.upsert({
+    where: { email: 'tahasheikh682@gmail.com' },
+    update: {
+      password: superAdminPassword,
+      firstName: 'Taha',
+      lastName: 'Sheikh',
+      roleId: superAdminRole!.id,
+      isActive: true,
+      inviteToken: null,
+      inviteExpiresAt: null,
+      passwordSetAt: new Date(),
+    },
+    create: {
+      email: 'tahasheikh682@gmail.com',
+      password: superAdminPassword,
+      firstName: 'Taha',
+      lastName: 'Sheikh',
+      phone: '',
+      roleId: superAdminRole!.id,
+      passwordSetAt: new Date(),
+    },
+  });
 
   await prisma.user.upsert({
     where: { email: 'superadmin@travel.com' },
@@ -140,7 +167,7 @@ async function main() {
   }
 
   const settings = [
-    { key: 'company_name', value: 'Moazin Travel Agency', category: 'general' },
+    { key: 'company_name', value: 'Huffaz Holiday', category: 'general' },
     { key: 'company_email', value: 'info@moazintravel.com', category: 'general' },
     { key: 'company_phone', value: '+1234567890', category: 'general' },
     { key: 'company_address', value: '123 Travel Street, City', category: 'general' },
@@ -230,8 +257,8 @@ async function main() {
       data: {
         name: 'Default Invoice',
         isDefault: true,
-        header: 'Moazin Travel Agency\nProfessional Travel Services',
-        footer: 'Thank you for choosing Moazin Travel!',
+        header: 'Huffaz Holiday\nProfessional Travel Services',
+        footer: 'Thank you for choosing Huffaz Holiday!',
         terms: 'Payment is due by the due date shown above.',
       },
     });
