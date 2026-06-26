@@ -8,6 +8,8 @@ import { createJournalEntry, resolvePaymentCreditAccount, reverseJournalEntry } 
 import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
 import { createSchedulesFromInvoice } from '../services/scheduleService';
 
+const TX_OPTS = { maxWait: 15000, timeout: 30000 };
+
 export async function getPayments(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
   const startDate = req.query.startDate as string;
@@ -155,14 +157,14 @@ export async function createPayment(req: AuthRequest, res: Response) {
           where: { id: pmt.id },
           data: { journalEntryId },
         });
-
-        if (invoiceId) {
-          await createSchedulesFromInvoice(invoiceId, tx);
-        }
       }
 
-      return { ...pmt, journalEntryId };
-    });
+      return { ...pmt, journalEntryId, invoiceId: invoiceId || null, verified };
+    }, TX_OPTS);
+
+    if (payment.verified && payment.invoiceId) {
+      await createSchedulesFromInvoice(payment.invoiceId);
+    }
 
     await logActivity(req, 'CREATE', 'Payment', payment.id);
 
@@ -191,9 +193,12 @@ export async function verifyPayment(req: AuthRequest, res: Response) {
   }
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
-      const paymentAmount = Number(payment.amount);
+    const paymentAmount = Number(payment.amount);
+    const payCurrency = payment.currency || 'PKR';
+    const rate = Number(payment.exchangeRate || (await getDefaultExchangeRate()));
+    const { amountPkr, amountSar } = convertCurrency(paymentAmount, payCurrency, rate);
 
+    const updated = await prisma.$transaction(async (tx) => {
       if (payment.invoiceId && payment.invoice) {
         const newPaid = Number(payment.invoice.paidAmount) + paymentAmount;
         const status = newPaid >= Number(payment.invoice.totalAmount) ? 'PAID' : 'PARTIAL';
@@ -208,10 +213,6 @@ export async function verifyPayment(req: AuthRequest, res: Response) {
           });
         }
       }
-
-      const payCurrency = payment.currency || 'PKR';
-      const rate = Number(payment.exchangeRate || await getDefaultExchangeRate());
-      const { amountPkr, amountSar } = convertCurrency(paymentAmount, payCurrency, rate);
 
       const creditAccount = await resolvePaymentCreditAccount(payment.invoiceId || undefined, tx);
       const entry = await createJournalEntry(
@@ -250,7 +251,7 @@ export async function verifyPayment(req: AuthRequest, res: Response) {
         },
         include: { invoice: true, account: true },
       });
-    });
+    }, TX_OPTS);
 
     await logActivity(req, 'UPDATE', 'Payment', payment.id, 'Verified');
 
@@ -311,7 +312,7 @@ export async function deletePayment(req: AuthRequest, res: Response) {
     });
 
     await tx.payment.delete({ where: { id: paramId(req) } });
-  });
+  }, TX_OPTS);
 
   await logActivity(req, 'DELETE', 'Payment', paramId(req));
   return res.json({ success: true, message: 'Payment deleted' });
