@@ -176,12 +176,52 @@ export async function getInvoiceHtml(req: AuthRequest, res: Response) {
 }
 
 export async function updateInvoice(req: AuthRequest, res: Response) {
+  const { customerId, subtotal, tax, discount, dueDate, notes, status, items } = req.body;
+
+  const subtotalNum = Number(subtotal);
+  const taxNum = Number(tax || 0);
+  const discountNum = Number(discount || 0);
+  const totalAmount = subtotalNum + taxNum - discountNum;
+
+  const data: Record<string, unknown> = {
+    customerId,
+    subtotal: subtotalNum,
+    tax: taxNum,
+    discount: discountNum,
+    totalAmount,
+    dueDate: dueDate ? new Date(dueDate) : undefined,
+    notes,
+    status,
+  };
+
+  if (Array.isArray(items) && items.length > 0) {
+    data.items = {
+      deleteMany: {},
+      create: items.map((i: {
+        description: string;
+        quantity?: number;
+        unitPrice: number;
+        amount: number;
+        serviceType?: string;
+        costAmount?: number;
+        vendorId?: string;
+        details?: Record<string, string>;
+      }) => ({
+        description: i.description,
+        quantity: i.quantity || 1,
+        unitPrice: i.unitPrice,
+        amount: i.amount,
+        serviceType: i.serviceType,
+        costAmount: i.costAmount || 0,
+        vendorId: i.vendorId || null,
+        details: i.details,
+      })),
+    };
+  }
+
   const invoice = await prisma.invoice.update({
     where: { id: paramId(req) },
-    data: {
-      ...req.body,
-      dueDate: req.body.dueDate ? new Date(req.body.dueDate) : undefined,
-    },
+    data,
     include: { customer: true, payments: true, items: true },
   });
 
