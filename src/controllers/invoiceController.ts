@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
 import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
@@ -133,7 +133,7 @@ export async function createInvoice(req: AuthRequest, res: Response) {
     }
 
     return created;
-  });
+  }, TX_OPTS);
 
   try {
     await confirmInvoice(invoice.id);

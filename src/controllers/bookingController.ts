@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
 import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
@@ -164,15 +164,13 @@ async function handleBookingConfirmed(bookingId: string, userId: string) {
   await createBookingConfirmation(userId, booking.bookingNumber);
 
   let invoice;
-  await prisma.$transaction(
-    async (tx) => {
-      invoice = await generateInvoiceFromBooking(bookingId, 14, tx);
-      await confirmInvoice(invoice.id, tx);
-      await allocateVendorCosts(bookingId, tx);
-      await createCheckInsFromBooking(bookingId, tx);
-    },
-    { maxWait: 10000, timeout: 60000 },
-  );
+  await prisma.$transaction(async (tx) => {
+    invoice = await generateInvoiceFromBooking(bookingId, 14, tx);
+    await confirmInvoice(invoice.id, tx);
+    await allocateVendorCosts(bookingId, tx);
+  }, TX_OPTS);
+
+  await createCheckInsFromBooking(bookingId);
 
   return prisma.invoice.findUnique({
     where: { id: invoice!.id },
@@ -222,7 +220,7 @@ export async function updateBooking(req: AuthRequest, res: Response) {
         serviceItems: { include: { vendor: true } },
       },
     });
-  });
+  }, TX_OPTS);
 
   await logActivity(req, 'UPDATE', 'Booking', booking.id, `Status: ${oldBooking?.status} -> ${booking.status}`);
 

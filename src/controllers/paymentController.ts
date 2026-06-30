@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
 import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
@@ -7,8 +7,6 @@ import { logActivity } from '../middleware/activityLogger';
 import { createJournalEntry, resolvePaymentCreditAccount, reverseJournalEntry } from '../services/ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
 import { createSchedulesFromInvoice } from '../services/scheduleService';
-
-const TX_OPTS = { maxWait: 15000, timeout: 30000 };
 
 export async function getPayments(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);

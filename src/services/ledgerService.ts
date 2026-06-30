@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { AccountType, Prisma } from '@prisma/client';
 import { generateNumber } from '../utils/helpers';
 
@@ -80,7 +80,7 @@ export async function createJournalEntry(
   };
 
   if (tx) return run(tx);
-  return prisma.$transaction(run);
+  return prisma.$transaction(run, TX_OPTS);
 }
 
 export async function getAccountBalance(accountId: string) {

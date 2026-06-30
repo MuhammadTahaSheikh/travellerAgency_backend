@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
 import { paginate, formatPagination, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
@@ -111,7 +111,7 @@ export async function createCustomer(req: AuthRequest, res: Response) {
         notes,
       },
     });
-  });
+  }, TX_OPTS);
 
   const displayName = type === 'B2B' ? companyName : `${firstName} ${lastName}`;
   await createCustomerAccount(customer.id, displayName);

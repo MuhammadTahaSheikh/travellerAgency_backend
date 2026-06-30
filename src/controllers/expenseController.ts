@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
 import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
@@ -92,7 +92,7 @@ export async function createExpense(req: AuthRequest, res: Response) {
       );
 
       return exp;
-    });
+    }, TX_OPTS);
 
     await logActivity(req, 'CREATE', 'Expense', expense.id);
     return res.status(201).json({ success: true, data: expense });

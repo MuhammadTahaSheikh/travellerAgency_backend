@@ -10,4 +10,7 @@ export const prisma =
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
+/** Remote Hostinger DB + multi-step ledger work needs more than Prisma's 5s default. */
+export const TX_OPTS = { maxWait: 15000, timeout: 30000 };
+
 export default prisma;

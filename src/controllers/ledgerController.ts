@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
 import { paginate, formatPagination, applyDateFilter } from '../utils/helpers';
 import { paramId } from '../utils/params';
@@ -212,7 +212,7 @@ export async function deleteJournalEntry(req: AuthRequest, res: Response) {
       });
     }
     await tx.journalEntry.update({ where: { id: paramId(req) }, data: { isDeleted: true } });
-  });
+  }, TX_OPTS);
 
   await logActivity(req, 'DELETE', 'JournalEntry', paramId(req));
   return res.json({ success: true, message: 'Journal entry deleted' });

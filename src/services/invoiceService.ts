@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { Prisma } from '@prisma/client';
 import { generateNumber } from '../utils/helpers';
 import { createJournalEntry, createCustomerAccount } from './ledgerService';
@@ -182,7 +182,7 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
   };
 
   if (tx) return run(tx);
-  return prisma.$transaction(run);
+  return prisma.$transaction(run, TX_OPTS);
 }
 
 export async function renderInvoiceHtml(invoiceId: string, baseUrl?: string) {
@@ -260,6 +260,7 @@ export async function allocateVendorCosts(bookingId: string, tx?: TxClient) {
     const existing = await client.vendorCostAllocation.count({ where: { bookingId } });
     if (existing > 0) return [];
 
+    const costOfSalesAccount = await getOrCreateCostOfSalesAccount(client);
     const allocations = [];
 
     for (const item of booking.serviceItems) {
@@ -277,7 +278,7 @@ export async function allocateVendorCosts(bookingId: string, tx?: TxClient) {
         `Vendor cost: ${item.description} (${booking.bookingNumber})`,
         [
           { accountId: vendorAccount.id, credit: cost, description: `Payable to ${vendorRecord.name}` },
-          { accountId: (await getOrCreateCostOfSalesAccount(client)).id, debit: cost, description: `Cost: ${item.serviceType}` },
+          { accountId: costOfSalesAccount.id, debit: cost, description: `Cost: ${item.serviceType}` },
         ],
         { reference: booking.bookingNumber },
         client,
@@ -301,7 +302,7 @@ export async function allocateVendorCosts(bookingId: string, tx?: TxClient) {
   };
 
   if (tx) return run(tx);
-  return prisma.$transaction(run);
+  return prisma.$transaction(run, TX_OPTS);
 }
 
 async function getOrCreateCostOfSalesAccount(tx?: TxClient) {

@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma, { TX_OPTS } from '../config/database';
 import { Prisma, ServiceType } from '@prisma/client';
 import { createJournalEntry } from './ledgerService';
 import { createVendorAccount } from './vendorService';
@@ -123,7 +123,7 @@ export async function postVendorCostToLedger(
   };
 
   if (tx) return run(tx);
-  return prisma.$transaction(run);
+  return prisma.$transaction(run, TX_OPTS);
 }
 
 export async function getPendingVendorCosts() {
