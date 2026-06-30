@@ -6,7 +6,8 @@ import { AuthRequest } from '../types';
 import { logActivity } from '../middleware/activityLogger';
 
 export async function login(req: AuthRequest, res: Response) {
-  const { email, password } = req.body;
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const { password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ success: false, error: 'Email and password required' });
   }
@@ -50,7 +51,7 @@ export async function login(req: AuthRequest, res: Response) {
   };
 
   req.user = authUser;
-  await logActivity(req, 'LOGIN', 'User', user.id, 'User logged in');
+  void logActivity(req, 'LOGIN', 'User', user.id, 'User logged in');
 
   const token = generateToken(authUser);
   const { password: _, ...userWithoutPassword } = user;
