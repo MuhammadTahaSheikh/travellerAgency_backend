@@ -1,17 +1,22 @@
 import { Response } from 'express';
 import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
-import { paginate, formatPagination, serializeForDeletedRecord } from '../utils/helpers';
+import { paginate, formatPagination, paginateSearch, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
-import { createCustomerAccount } from '../services/ledgerService';
+import { createCustomerAccount, getLedgerTransactions, buildLedgerRows, CurrencyView } from '../services/ledgerService';
 import { logActivity } from '../middleware/activityLogger';
 import { getNextTradePartnerId } from '../services/tradePartnerService';
-import { getLedgerTransactions, buildLedgerRows } from '../services/ledgerService';
+import { sendLedgerExport } from '../utils/ledgerExport';
 import { CustomerType } from '@prisma/client';
 
 export async function getCustomers(req: AuthRequest, res: Response) {
-  const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
-  const search = req.query.search as string;
+  const search = (req.query.search as string)?.trim();
+  const useSearchPagination = Boolean(search);
+  const { page, limit, skip } = useSearchPagination
+    ? paginateSearch(req.query.page as string, req.query.limit as string)
+    : paginate(req.query.page as string, req.query.limit as string);
+
+  const customerType = req.query.customerType as string;
 
   const where = search
     ? {
@@ -25,6 +30,10 @@ export async function getCustomers(req: AuthRequest, res: Response) {
         ],
       }
     : {};
+
+  if (customerType === 'B2B') {
+    (where as Record<string, unknown>).customerType = 'B2B';
+  }
 
   const [customers, total] = await Promise.all([
     prisma.customer.findMany({
@@ -227,6 +236,31 @@ export async function getCustomerLedger(req: AuthRequest, res: Response) {
       bookings: customer.bookings,
       transactions,
     },
+  });
+}
+
+export async function exportCustomerLedger(req: AuthRequest, res: Response) {
+  const format = (req.query.format as string) || 'csv';
+  const currencyView: CurrencyView = req.query.currency === 'SAR' ? 'SAR' : 'PKR';
+  const customer = await prisma.customer.findUnique({
+    where: { id: paramId(req) },
+    include: { account: true },
+  });
+  if (!customer) return res.status(404).json({ success: false, error: 'Customer not found' });
+  if (!customer.account) return res.status(404).json({ success: false, error: 'Customer ledger account not found' });
+
+  const titleName = customer.customerType === 'B2B' && customer.companyName
+    ? customer.companyName
+    : `${customer.firstName} ${customer.lastName}`;
+
+  await logActivity(req, 'EXPORT', 'CustomerLedger', customer.id);
+  return sendLedgerExport(res, {
+    accountId: customer.account.id,
+    title: `Customer Ledger — ${titleName}`,
+    subtitle: customer.tradePartnerId || customer.phone,
+    filename: `customer-ledger-${titleName.replace(/\s+/g, '-').toLowerCase()}.csv`,
+    format,
+    currencyView,
   });
 }
 

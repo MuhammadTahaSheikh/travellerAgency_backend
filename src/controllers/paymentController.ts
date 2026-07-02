@@ -339,10 +339,74 @@ export async function getAccounts(_req: AuthRequest, res: Response) {
 }
 
 export async function createAccount(req: AuthRequest, res: Response) {
-  const { name, code, type, description } = req.body;
+  const { name, code, type, description, employeeId } = req.body;
+  if (!name || !type) {
+    return res.status(400).json({ success: false, error: 'Name and type are required' });
+  }
+  if (!['CASH', 'BANK'].includes(type)) {
+    return res.status(400).json({ success: false, error: 'Only CASH or BANK accounts can be created' });
+  }
+
+  const prefix = type === 'BANK' ? 'BANK' : 'CASH';
+  const existing = await prisma.account.findMany({
+    where: { type, code: { startsWith: `${prefix}-` } },
+    select: { code: true },
+  });
+  const nums = existing
+    .map((a) => parseInt(a.code.replace(`${prefix}-`, ''), 10))
+    .filter((n) => !isNaN(n));
+  const nextNum = nums.length ? Math.max(...nums) + 1 : 1;
+  const autoCode = `${prefix}-${String(nextNum).padStart(3, '0')}`;
+
   const account = await prisma.account.create({
-    data: { name, code: code || generateNumber('ACC'), type, description },
+    data: {
+      name,
+      code: code || autoCode,
+      type,
+      description,
+      employeeId: employeeId || null,
+    },
+    include: { employee: { select: { id: true, firstName: true, lastName: true } } },
   });
   await logActivity(req, 'CREATE', 'Account', account.id);
   return res.status(201).json({ success: true, data: account });
+}
+
+export async function updateAccount(req: AuthRequest, res: Response) {
+  const { name, description, employeeId } = req.body;
+  const account = await prisma.account.findUnique({ where: { id: paramId(req) } });
+  if (!account) return res.status(404).json({ success: false, error: 'Account not found' });
+  if (!['CASH', 'BANK'].includes(account.type) || account.customerId || account.vendorId) {
+    return res.status(400).json({ success: false, error: 'Only company cash/bank accounts can be updated' });
+  }
+
+  const updated = await prisma.account.update({
+    where: { id: paramId(req) },
+    data: {
+      name,
+      description,
+      employeeId: employeeId !== undefined ? (employeeId || null) : undefined,
+    },
+    include: { employee: { select: { id: true, firstName: true, lastName: true } } },
+  });
+  await logActivity(req, 'UPDATE', 'Account', updated.id);
+  return res.json({ success: true, data: updated });
+}
+
+export async function deactivateAccount(req: AuthRequest, res: Response) {
+  const account = await prisma.account.findUnique({ where: { id: paramId(req) } });
+  if (!account) return res.status(404).json({ success: false, error: 'Account not found' });
+  if (!['CASH', 'BANK'].includes(account.type) || account.customerId || account.vendorId) {
+    return res.status(400).json({ success: false, error: 'Only company cash/bank accounts can be deactivated' });
+  }
+  if (Number(account.balance) !== 0 || Number(account.balancePkr) !== 0 || Number(account.balanceSar) !== 0) {
+    return res.status(400).json({ success: false, error: 'Account must have zero balance before deactivation' });
+  }
+
+  const updated = await prisma.account.update({
+    where: { id: paramId(req) },
+    data: { isActive: false, employeeId: null },
+  });
+  await logActivity(req, 'DELETE', 'Account', updated.id);
+  return res.json({ success: true, data: updated, message: 'Account deactivated' });
 }

@@ -1,12 +1,14 @@
 import { Response } from 'express';
 import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
-import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord } from '../utils/helpers';
+import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord, paginateSearch } from '../utils/helpers';
+import { allocateInvoiceNumber, resolveInvoiceNumber } from '../services/numberingService';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createPaymentReminder } from '../services/notificationService';
 import { confirmInvoice, renderInvoiceHtml } from '../services/invoiceService';
 import { createVendorPosting } from '../services/vendorPostingService';
+import { ensureInvoiceShareToken } from '../services/shareTokenService';
 
 async function getInvoicePrefix() {
   const setting = await prisma.setting.findUnique({ where: { key: 'invoice_prefix' } });
@@ -14,7 +16,11 @@ async function getInvoicePrefix() {
 }
 
 export async function getInvoices(req: AuthRequest, res: Response) {
-  const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
+  const search = (req.query.search as string)?.trim();
+  const useSearchPagination = Boolean(search);
+  const { page, limit, skip } = useSearchPagination
+    ? paginateSearch(req.query.page as string, req.query.limit as string)
+    : paginate(req.query.page as string, req.query.limit as string);
   const status = req.query.status as string;
   const startDate = req.query.startDate as string;
   const endDate = req.query.endDate as string;
@@ -22,6 +28,14 @@ export async function getInvoices(req: AuthRequest, res: Response) {
   const where: Record<string, unknown> = {};
   if (status) where.status = status;
   applyDateFilter(where, 'issueDate', startDate, endDate);
+  if (search) {
+    where.OR = [
+      { invoiceNumber: { contains: search } },
+      { customer: { firstName: { contains: search } } },
+      { customer: { lastName: { contains: search } } },
+      { customer: { companyName: { contains: search } } },
+    ];
+  }
 
   const [invoices, total] = await Promise.all([
     prisma.invoice.findMany({
@@ -68,9 +82,18 @@ export async function createInvoice(req: AuthRequest, res: Response) {
   const prefix = await getInvoicePrefix();
 
   const invoice = await prisma.$transaction(async (tx) => {
+    let invoiceNumber: string;
+    if (bookingId) {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: { bookingNumber: true } });
+      if (!booking) throw new Error('Booking not found');
+      invoiceNumber = await resolveInvoiceNumber(booking.bookingNumber, prefix, tx);
+    } else {
+      invoiceNumber = await allocateInvoiceNumber(prefix, tx);
+    }
+
     const created = await tx.invoice.create({
       data: {
-        invoiceNumber: generateNumber(prefix),
+        invoiceNumber,
         bookingId,
         customerId,
         subtotal,
@@ -161,6 +184,21 @@ export async function confirmInvoiceHandler(req: AuthRequest, res: Response) {
     const message = err instanceof Error ? err.message : 'Failed to confirm invoice';
     return res.status(400).json({ success: false, error: message });
   }
+}
+
+export async function getInvoiceShareLink(req: AuthRequest, res: Response) {
+  const invoice = await prisma.invoice.findUnique({ where: { id: paramId(req) } });
+  if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found' });
+
+  const shareToken = await ensureInvoiceShareToken(invoice.id);
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  return res.json({
+    success: true,
+    data: {
+      shareToken,
+      url: `${baseUrl}/api/public/invoices/${shareToken}`,
+    },
+  });
 }
 
 export async function getInvoiceHtml(req: AuthRequest, res: Response) {

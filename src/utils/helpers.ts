@@ -6,7 +6,16 @@ export function generateNumber(prefix: string): string {
 
 export function paginate(page?: string | number, limit?: string | number) {
   const p = Math.max(1, parseInt(String(page || 1), 10));
-  const l = Math.min(100, Math.max(1, parseInt(String(limit || 20), 10)));
+  const requested = parseInt(String(limit || 20), 10);
+  const l = Math.min(100, Math.max(1, isNaN(requested) ? 20 : requested));
+  return { page: p, limit: l, skip: (p - 1) * l };
+}
+
+/** Higher limit for dropdown/search result sets */
+export function paginateSearch(page?: string | number, limit?: string | number) {
+  const p = Math.max(1, parseInt(String(page || 1), 10));
+  const requested = parseInt(String(limit || 50), 10);
+  const l = Math.min(200, Math.max(1, isNaN(requested) ? 50 : requested));
   return { page: p, limit: l, skip: (p - 1) * l };
 }
 

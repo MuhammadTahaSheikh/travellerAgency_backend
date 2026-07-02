@@ -6,6 +6,7 @@ const router = Router();
 
 router.use(authenticate);
 router.get('/', voucher.getVouchers);
+router.get('/:id/share-link', voucher.getVoucherShareLink);
 router.get('/:id/html', voucher.getVoucherHtml);
 router.get('/:id', voucher.getVoucher);
 router.post('/', voucher.createVoucher);

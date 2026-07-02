@@ -1,7 +1,8 @@
 import { Response } from 'express';
 import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
-import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord } from '../utils/helpers';
+import { paginate, formatPagination, applyDateFilter, serializeForDeletedRecord, paginateSearch } from '../utils/helpers';
+import { allocateBookingNumber } from '../services/numberingService';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createBookingConfirmation } from '../services/notificationService';
@@ -13,7 +14,11 @@ import {
 } from '../services/invoiceService';
 
 export async function getBookings(req: AuthRequest, res: Response) {
-  const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
+  const search = (req.query.search as string)?.trim();
+  const useSearchPagination = Boolean(search);
+  const { page, limit, skip } = useSearchPagination
+    ? paginateSearch(req.query.page as string, req.query.limit as string)
+    : paginate(req.query.page as string, req.query.limit as string);
   const status = req.query.status as string;
   const startDate = req.query.startDate as string;
   const endDate = req.query.endDate as string;
@@ -22,6 +27,14 @@ export async function getBookings(req: AuthRequest, res: Response) {
   if (status) where.status = status;
   if (req.user?.role === 'USER') where.createdById = req.user.id;
   applyDateFilter(where, 'createdAt', startDate, endDate);
+  if (search) {
+    where.OR = [
+      { bookingNumber: { contains: search } },
+      { customer: { firstName: { contains: search } } },
+      { customer: { lastName: { contains: search } } },
+      { customer: { companyName: { contains: search } } },
+    ];
+  }
 
   const [bookings, total] = await Promise.all([
     prisma.booking.findMany({
@@ -63,13 +76,57 @@ export async function getBooking(req: AuthRequest, res: Response) {
   return res.json({ success: true, data: booking });
 }
 
+/**
+ * Resolves the customer FK for a booking. B2B bookings must reference a registered
+ * customer; B2C bookings accept a free-text guest name, for which we find-or-create a
+ * lightweight B2C customer so the required relation stays satisfied.
+ */
+async function resolveCustomerId(input: {
+  bookingType?: string;
+  customerId?: string;
+  guestName?: string;
+}): Promise<{ customerId: string } | { error: string }> {
+  const bookingType = input.bookingType === 'B2C' ? 'B2C' : input.customerId ? 'B2B' : input.guestName ? 'B2C' : 'B2B';
+
+  if (bookingType === 'B2B') {
+    if (!input.customerId) return { error: 'A registered company/client is required for B2B bookings' };
+    return { customerId: input.customerId };
+  }
+
+  const guestName = (input.guestName || '').trim();
+  if (!guestName) return { error: 'Guest name is required for B2C bookings' };
+
+  const [firstName, ...rest] = guestName.split(/\s+/);
+  const lastName = rest.join(' ') || '-';
+
+  const existing = await prisma.customer.findFirst({
+    where: { customerType: 'B2C', firstName, lastName },
+  });
+  if (existing) return { customerId: existing.id };
+
+  const created = await prisma.customer.create({
+    data: { customerType: 'B2C', firstName, lastName, phone: '' },
+  });
+  return { customerId: created.id };
+}
+
 export async function createBooking(req: AuthRequest, res: Response) {
   const {
     packageId,
     customerId,
+    bookingType,
+    guestName,
+    currency,
+    priceMode,
     travelDate,
     returnDate,
     numTravelers,
+    adults,
+    children,
+    infants,
+    priceAdult,
+    priceChild,
+    priceInfant,
     totalAmount,
     discount,
     notes,
@@ -78,9 +135,11 @@ export async function createBooking(req: AuthRequest, res: Response) {
     serviceItems,
   } = req.body;
 
-  if (!customerId) {
-    return res.status(400).json({ success: false, error: 'Customer is required' });
+  const resolved = await resolveCustomerId({ bookingType, customerId, guestName });
+  if ('error' in resolved) {
+    return res.status(400).json({ success: false, error: resolved.error });
   }
+  const resolvedCustomerId = resolved.customerId;
 
   const items = serviceItems || [];
   let computedTotal = totalAmount ? Number(totalAmount) : 0;
@@ -89,23 +148,35 @@ export async function createBooking(req: AuthRequest, res: Response) {
     computedTotal = items.reduce((sum: number, i: { amount: number }) => sum + Number(i.amount || 0), 0);
   }
 
-  if (!packageId && items.length === 0) {
-    return res.status(400).json({ success: false, error: 'Package or at least one service item is required' });
+  // Determined pricing can stand on per-passenger rates alone; otherwise require a package or a service item.
+  if (!packageId && items.length === 0 && computedTotal <= 0) {
+    return res.status(400).json({ success: false, error: 'Package, a service item, or determined passenger pricing is required' });
   }
 
   if (!computedTotal || computedTotal <= 0) {
     return res.status(400).json({ success: false, error: 'Total amount must be greater than zero' });
   }
 
+  const bookingNumber = await allocateBookingNumber();
   const booking = await prisma.booking.create({
     data: {
-      bookingNumber: generateNumber('BK'),
+      bookingNumber,
       packageId: packageId || null,
-      customerId,
+      customerId: resolvedCustomerId,
       createdById: req.user!.id,
+      bookingType: bookingType === 'B2B' ? 'B2B' : 'B2C',
+      guestName: bookingType === 'B2C' ? (guestName || null) : null,
+      currency: currency === 'SAR' ? 'SAR' : 'PKR',
+      priceMode: priceMode === 'BREAKDOWN' ? 'BREAKDOWN' : 'DETERMINED',
       travelDate: travelDate ? new Date(travelDate) : undefined,
       returnDate: returnDate ? new Date(returnDate) : undefined,
       numTravelers: numTravelers || 1,
+      adults: adults ?? 1,
+      children: children ?? 0,
+      infants: infants ?? 0,
+      priceAdult: priceAdult || 0,
+      priceChild: priceChild || 0,
+      priceInfant: priceInfant || 0,
       totalAmount: computedTotal,
       discount: discount || 0,
       notes,

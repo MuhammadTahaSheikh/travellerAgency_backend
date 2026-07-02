@@ -173,6 +173,7 @@ async function main() {
     { key: 'company_address', value: '123 Travel Street, City', category: 'general' },
     { key: 'currency', value: 'PKR', category: 'financial' },
     { key: 'currency_locale', value: 'en-PK', category: 'financial' },
+    { key: 'default_pkr_sar_rate', value: '75', category: 'financial' },
     { key: 'tax_rate', value: '0', category: 'financial' },
     { key: 'invoice_prefix', value: 'INV', category: 'financial' },
   ];
@@ -269,6 +270,15 @@ async function main() {
     update: {},
     create: { name: 'Cost of Sales', code: 'COS-001', type: 'SUPPLIER' },
   });
+
+  await prisma.documentSequence.upsert({
+    where: { id: 'booking' },
+    update: {},
+    create: { id: 'booking', nextValue: 1 },
+  });
+
+  const { syncDocumentSequenceFromDatabase } = await import('../src/services/numberingService');
+  await syncDocumentSequenceFromDatabase();
 
   console.log('Seed completed successfully!');
   console.log('\nDefault login credentials (password: admin123):');

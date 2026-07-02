@@ -1,6 +1,9 @@
 import { Response, Request } from 'express';
 import prisma from '../config/database';
 import { paramId } from '../utils/params';
+import { renderInvoiceHtml } from '../services/invoiceService';
+import { renderVoucherHtml } from '../services/voucherService';
+import { ensureInvoiceShareToken, ensureVoucherShareToken } from '../services/shareTokenService';
 
 const PUBLIC_SETTING_KEYS = [
   'company_name',
@@ -53,4 +56,62 @@ export async function getPublicCompany(_req: unknown, res: Response) {
       currencyLocale: data.currency_locale || 'en-PK',
     },
   });
+}
+
+export async function getPublicInvoiceHtml(req: Request, res: Response) {
+  try {
+    const shareToken = paramId(req);
+    let invoice = await prisma.invoice.findUnique({
+      where: { shareToken },
+      select: { id: true },
+    });
+
+    if (!invoice) {
+      invoice = await prisma.invoice.findUnique({
+        where: { id: shareToken },
+        select: { id: true },
+      });
+    }
+
+    if (!invoice) {
+      return res.status(404).send('<h1>Invoice not found</h1>');
+    }
+
+    await ensureInvoiceShareToken(invoice.id);
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const html = await renderInvoiceHtml(invoice.id, baseUrl);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
+  } catch {
+    return res.status(404).send('<h1>Invoice not found</h1>');
+  }
+}
+
+export async function getPublicVoucherHtml(req: Request, res: Response) {
+  try {
+    const shareToken = paramId(req);
+    let voucher = await prisma.voucher.findUnique({
+      where: { shareToken },
+      select: { id: true },
+    });
+
+    if (!voucher) {
+      voucher = await prisma.voucher.findUnique({
+        where: { id: shareToken },
+        select: { id: true },
+      });
+    }
+
+    if (!voucher) {
+      return res.status(404).send('<h1>Voucher not found</h1>');
+    }
+
+    await ensureVoucherShareToken(voucher.id);
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const html = await renderVoucherHtml(voucher.id, undefined, baseUrl);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
+  } catch {
+    return res.status(404).send('<h1>Voucher not found</h1>');
+  }
 }

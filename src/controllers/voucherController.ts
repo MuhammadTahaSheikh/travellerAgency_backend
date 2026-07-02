@@ -5,6 +5,7 @@ import { paginate, formatPagination } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { generateVoucherFromPayment, renderVoucherHtml, markVoucherShared } from '../services/voucherService';
+import { ensureVoucherShareToken } from '../services/shareTokenService';
 
 export async function getVouchers(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
@@ -52,6 +53,21 @@ export async function createVoucher(req: AuthRequest, res: Response) {
     const message = err instanceof Error ? err.message : 'Failed to create voucher';
     return res.status(400).json({ success: false, error: message });
   }
+}
+
+export async function getVoucherShareLink(req: AuthRequest, res: Response) {
+  const voucher = await prisma.voucher.findUnique({ where: { id: paramId(req) } });
+  if (!voucher) return res.status(404).json({ success: false, error: 'Voucher not found' });
+
+  const shareToken = await ensureVoucherShareToken(voucher.id);
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  return res.json({
+    success: true,
+    data: {
+      shareToken,
+      url: `${baseUrl}/api/public/vouchers/${shareToken}`,
+    },
+  });
 }
 
 export async function getVoucherHtml(req: AuthRequest, res: Response) {

@@ -5,6 +5,7 @@ import { paginate, formatPagination, generateNumber, applyDateFilter, serializeF
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createJournalEntry, getOrCreateExpenseAccount, getOrCreateVendorExpenseAccount } from '../services/ledgerService';
+import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
 
 export async function getExpenses(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
@@ -37,7 +38,10 @@ export async function getExpenses(req: AuthRequest, res: Response) {
 }
 
 export async function createExpense(req: AuthRequest, res: Response) {
-  const { category, accountId, amount, description, vendor, vendorId, bookingId, expenseDate, receiptPath } = req.body;
+  const {
+    category, accountId, amount, currency, exchangeRate,
+    description, vendor, vendorId, bookingId, expenseDate, receiptPath,
+  } = req.body;
 
   if (!category || !accountId || !amount || !description) {
     return res.status(400).json({ success: false, error: 'Category, account, amount, and description are required' });
@@ -47,6 +51,10 @@ export async function createExpense(req: AuthRequest, res: Response) {
   if (expenseAmount <= 0) {
     return res.status(400).json({ success: false, error: 'Amount must be greater than zero' });
   }
+
+  const expCurrency: 'PKR' | 'SAR' = currency === 'SAR' ? 'SAR' : 'PKR';
+  const rate = exchangeRate ? Number(exchangeRate) : await getDefaultExchangeRate();
+  const { amountPkr, amountSar } = convertCurrency(expenseAmount, expCurrency, rate);
 
   try {
     const expense = await prisma.$transaction(async (tx) => {
@@ -59,6 +67,10 @@ export async function createExpense(req: AuthRequest, res: Response) {
           category,
           accountId,
           amount: expenseAmount,
+          currency: expCurrency,
+          exchangeRate: rate,
+          amountPkr,
+          amountSar,
           description,
           vendor,
           vendorId: vendorId || null,
@@ -81,11 +93,18 @@ export async function createExpense(req: AuthRequest, res: Response) {
         debitAccount = await getOrCreateExpenseAccount(tx);
       }
 
+      const journalLine = {
+        currency: expCurrency,
+        exchangeRate: rate,
+        amountPkr,
+        amountSar,
+      };
+
       await createJournalEntry(
         `Expense: ${description}`,
         [
-          { accountId: debitAccount.id, debit: expenseAmount, description: `Expense: ${category}` },
-          { accountId, credit: expenseAmount, description: 'Payment for expense' },
+          { accountId: debitAccount.id, debit: expenseAmount, description: `Expense: ${category}`, ...journalLine },
+          { accountId, credit: expenseAmount, description: 'Payment for expense', ...journalLine },
         ],
         { reference: exp.expenseNumber, receiptPath },
         tx

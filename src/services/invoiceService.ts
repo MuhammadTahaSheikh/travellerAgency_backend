@@ -1,6 +1,10 @@
 import prisma, { TX_OPTS } from '../config/database';
 import { Prisma } from '@prisma/client';
 import { generateNumber } from '../utils/helpers';
+import {
+  allocateInvoiceNumber,
+  resolveInvoiceNumber,
+} from './numberingService';
 import { createJournalEntry, createCustomerAccount } from './ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from './currencyService';
 import { logoHtml, BRAND_NAME, BRAND_TAGLINE } from './documentBrand';
@@ -83,7 +87,11 @@ export async function generateInvoiceFromBooking(bookingId: string, dueDays = 14
     });
   }
 
-  if (items.length === 0) {
+  // Determined-price bookings capture cost only on their service items (sale = 0), so the
+  // customer-facing figure lives on booking.totalAmount. Fall back to it when no priced lines exist.
+  const pricedTotal = items.reduce((sum, i) => sum + i.amount, 0);
+  if (items.length === 0 || pricedTotal <= 0) {
+    items.length = 0;
     items.push({
       description: `Booking ${booking.bookingNumber}`,
       quantity: 1,
@@ -99,9 +107,11 @@ export async function generateInvoiceFromBooking(bookingId: string, dueDays = 14
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + dueDays);
 
+  const invoiceNumber = await resolveInvoiceNumber(booking.bookingNumber, prefix, tx);
+
   return client.invoice.create({
     data: {
-      invoiceNumber: generateNumber(prefix),
+      invoiceNumber,
       bookingId,
       customerId: booking.customerId,
       subtotal,
@@ -330,25 +340,31 @@ export async function createCheckInsFromBooking(bookingId: string, tx?: TxClient
 
   for (const item of booking.serviceItems) {
     if (item.serviceType !== 'HOTEL') continue;
-    const details = item.details as Record<string, string> | null;
-    const checkInDate = details?.checkInDate ? new Date(details.checkInDate) : booking.travelDate;
-    if (!checkInDate) continue;
+    const details = item.details as (Record<string, string> & { rows?: Record<string, string>[] }) | null;
+    // Multi-row accommodations store each hotel/room as a row; fall back to the flat detail shape.
+    const rows = Array.isArray(details?.rows) && details!.rows!.length > 0 ? details!.rows! : [details || {}];
 
-    const existing = await client.checkInRecord.findFirst({
-      where: { bookingId, hotelName: details?.hotelName || item.description },
-    });
-    if (existing) continue;
+    for (const row of rows) {
+      const checkInDate = row?.checkInDate ? new Date(row.checkInDate) : booking.travelDate;
+      if (!checkInDate) continue;
 
-    const record = await client.checkInRecord.create({
-      data: {
-        bookingId,
-        hotelName: details?.hotelName || item.description,
-        checkInDate,
-        guestName,
-        roomDetails: details?.roomType || details?.roomDetails || null,
-      },
-    });
-    records.push(record);
+      const hotelName = row?.hotelName || item.description;
+      const existing = await client.checkInRecord.findFirst({
+        where: { bookingId, hotelName },
+      });
+      if (existing) continue;
+
+      const record = await client.checkInRecord.create({
+        data: {
+          bookingId,
+          hotelName,
+          checkInDate,
+          guestName,
+          roomDetails: row?.roomType || row?.roomDetails || null,
+        },
+      });
+      records.push(record);
+    }
   }
 
   return records;

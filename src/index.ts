@@ -27,6 +27,7 @@ import checkInRoutes from './routes/checkInRoutes';
 import vendorPostingRoutes from './routes/vendorPostingRoutes';
 import approvalRoutes from './routes/approvalRoutes';
 import uploadRoutes from './routes/uploadRoutes';
+import currencyRoutes from './routes/currencyRoutes';
 import { startScheduler } from './services/schedulerService';
 
 const uploadDir = path.resolve(config.uploadDir);
@@ -97,6 +98,7 @@ app.use('/api/check-ins', checkInRoutes);
 app.use('/api/vendor-postings', vendorPostingRoutes);
 app.use('/api/approvals', approvalRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/currency', currencyRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

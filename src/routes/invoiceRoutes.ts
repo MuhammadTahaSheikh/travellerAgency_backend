@@ -8,6 +8,7 @@ router.use(authenticate);
 router.get('/', invoice.getInvoices);
 router.get('/overdue', invoice.getOverdueInvoices);
 router.get('/templates', invoice.getInvoiceTemplates);
+router.get('/:id/share-link', invoice.getInvoiceShareLink);
 router.get('/:id/html', invoice.getInvoiceHtml);
 router.get('/:id', invoice.getInvoice);
 router.post('/', authorizeMinRole('ADMIN'), invoice.createInvoice);

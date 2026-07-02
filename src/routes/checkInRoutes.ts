@@ -5,6 +5,7 @@ import { authenticate } from '../middleware/auth';
 const router = Router();
 
 router.use(authenticate);
+router.get('/export', checkIn.exportCheckIns);
 router.get('/', checkIn.getCheckIns);
 router.post('/', checkIn.createCheckIn);
 router.put('/:id', checkIn.updateCheckIn);

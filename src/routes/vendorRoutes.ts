@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticate);
 router.get('/', vendor.getVendors);
 router.get('/payables', vendor.getVendorPayables);
+router.get('/:id/ledger/export', vendor.exportVendorLedger);
 router.get('/:id/ledger', vendor.getVendorLedger);
 router.post('/:id/pay', authorizeMinRole('ADMIN'), vendor.payVendor);
 router.get('/:id', vendor.getVendor);

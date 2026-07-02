@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { generateNumber } from '../utils/helpers';
+import { voucherNumberFromLinkedDocument } from './numberingService';
 import { VoucherFormat } from '@prisma/client';
 import { issuerFromCustomer, logoHtml, BRAND_NAME } from './documentBrand';
 
@@ -55,9 +55,14 @@ export async function generateVouchersForApprovedInvoice(invoiceId: string) {
     const hotelDetails = (hotelItem?.details as Record<string, string> | null) || {};
     const transportDetails = (transportItem?.details as Record<string, string> | null) || {};
 
+    const voucherNumber = await voucherNumberFromLinkedDocument(
+      invoice.booking?.bookingNumber,
+      invoice.invoiceNumber
+    );
+
     const voucher = await prisma.voucher.create({
       data: {
-        voucherNumber: generateNumber('VCH'),
+        voucherNumber,
         invoiceId,
         bookingId: invoice.bookingId,
         paymentId: payment?.id,

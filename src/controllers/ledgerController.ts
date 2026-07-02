@@ -10,10 +10,23 @@ import {
   CurrencyView,
 } from '../services/ledgerService';
 import { logActivity } from '../middleware/activityLogger';
+import { sendLedgerExport } from '../utils/ledgerExport';
+import { createInternalTransfer, executeLedgerTransfer } from '../services/internalTransferService';
 
 export async function getAccounts(req: AuthRequest, res: Response) {
+  const search = (req.query.search as string)?.trim();
   const accounts = await prisma.account.findMany({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search } },
+              { code: { contains: search } },
+            ],
+          }
+        : {}),
+    },
     include: {
       customer: { select: { id: true, firstName: true, lastName: true, phone: true, companyName: true, tradePartnerId: true, customerType: true } },
       vendor: { select: { id: true, name: true, category: true } },
@@ -131,7 +144,8 @@ export async function getGeneralLedger(req: AuthRequest, res: Response) {
   return res.json({ success: true, data: rows, currency: currencyView });
 }
 
-export async function getTrialBalanceReport(_req: AuthRequest, res: Response) {
+export async function getTrialBalanceReport(req: AuthRequest, res: Response) {
+  const currency = req.query.currency === 'SAR' ? 'SAR' : 'PKR';
   const accounts = await prisma.account.findMany({
     where: { isActive: true },
     select: {
@@ -149,18 +163,23 @@ export async function getTrialBalanceReport(_req: AuthRequest, res: Response) {
     orderBy: { name: 'asc' },
   });
 
-  const rows = accounts.map((acc) => ({
-    accountId: acc.id,
-    accountName: acc.name,
-    accountCode: acc.code,
-    accountType: acc.type,
-    customerId: acc.customerId,
-    vendorId: acc.vendorId,
-    employeeId: acc.employeeId,
-    debit: Number(acc.balance) > 0 ? Number(acc.balance) : 0,
-    credit: Number(acc.balance) < 0 ? Math.abs(Number(acc.balance)) : 0,
-    balance: Number(acc.balance),
-  }));
+  const rows = accounts.map((acc) => {
+    const bal = currency === 'SAR'
+      ? Number(acc.balanceSar || 0)
+      : Number(acc.balancePkr ?? acc.balance);
+    return {
+      accountId: acc.id,
+      accountName: acc.name,
+      accountCode: acc.code,
+      accountType: acc.type,
+      customerId: acc.customerId,
+      vendorId: acc.vendorId,
+      employeeId: acc.employeeId,
+      debit: bal > 0 ? bal : 0,
+      credit: bal < 0 ? Math.abs(bal) : 0,
+      balance: bal,
+    };
+  });
 
   const groupKey = (r: (typeof rows)[number]) => {
     if (r.customerId) return 'customers';
@@ -216,4 +235,144 @@ export async function deleteJournalEntry(req: AuthRequest, res: Response) {
 
   await logActivity(req, 'DELETE', 'JournalEntry', paramId(req));
   return res.json({ success: true, message: 'Journal entry deleted' });
+}
+
+export async function transferBetweenAccounts(req: AuthRequest, res: Response) {
+  const { fromAccountId, toAccountId, amount, currency, exchangeRate, description, date, reference, notes } = req.body;
+
+  try {
+    const entry = await executeLedgerTransfer({
+      fromAccountId,
+      toAccountId,
+      amount: Number(amount),
+      currency: currency === 'SAR' ? 'SAR' : 'PKR',
+      exchangeRate: exchangeRate ? Number(exchangeRate) : undefined,
+      description,
+      date: date ? new Date(date) : undefined,
+      reference,
+      notes,
+    });
+
+    await logActivity(req, 'CREATE', 'LedgerTransfer', entry.id);
+    return res.status(201).json({ success: true, data: entry });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Transfer failed';
+    return res.status(400).json({ success: false, error: message });
+  }
+}
+
+export async function createInternalTransferHandler(req: AuthRequest, res: Response) {
+  const { sourceType, sourceEntityId, targetType, targetEntityId, amount, currency, exchangeRate, remarks, date } = req.body;
+
+  try {
+    const result = await createInternalTransfer({
+      sourceType: sourceType === 'VENDOR' ? 'VENDOR' : 'B2B',
+      sourceEntityId,
+      targetType: targetType === 'VENDOR' ? 'VENDOR' : 'B2B',
+      targetEntityId,
+      amount: Number(amount),
+      currency: currency === 'SAR' ? 'SAR' : 'PKR',
+      exchangeRate: exchangeRate ? Number(exchangeRate) : undefined,
+      remarks,
+      date: date ? new Date(date) : undefined,
+    });
+
+    await logActivity(
+      req,
+      'CREATE',
+      'InternalTransfer',
+      result.entry.id,
+      `${result.transferReference}: ${result.source.name} → ${result.target.name}`
+    );
+
+    return res.status(201).json({
+      success: true,
+      data: result,
+      message: `Internal transfer ${result.transferReference} completed`,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Internal transfer failed';
+    return res.status(400).json({ success: false, error: message });
+  }
+}
+
+export async function exportAccountTransactions(req: AuthRequest, res: Response) {
+  const format = (req.query.format as string) || 'csv';
+  const { startDate, endDate, currency } = req.query;
+  const currencyView: CurrencyView = currency === 'SAR' ? 'SAR' : 'PKR';
+
+  const account = await prisma.account.findUnique({ where: { id: paramId(req) } });
+  if (!account) return res.status(404).json({ success: false, error: 'Account not found' });
+
+  await logActivity(req, 'EXPORT', 'Account', account.id);
+  return sendLedgerExport(res, {
+    accountId: account.id,
+    title: `Ledger — ${account.name}`,
+    subtitle: account.code,
+    filename: `ledger-${account.code}.csv`,
+    format,
+    currencyView,
+    startDate: startDate ? new Date(startDate as string) : undefined,
+    endDate: endDate ? new Date(endDate as string) : undefined,
+  });
+}
+
+export async function exportGeneralLedger(req: AuthRequest, res: Response) {
+  const format = (req.query.format as string) || 'csv';
+  const { startDate, endDate, accountId, currency } = req.query;
+  const currencyView: CurrencyView = currency === 'SAR' ? 'SAR' : 'PKR';
+
+  await logActivity(req, 'EXPORT', 'GeneralLedger', 'export');
+
+  if (accountId) {
+    const account = await prisma.account.findUnique({ where: { id: accountId as string } });
+    if (!account) return res.status(404).json({ success: false, error: 'Account not found' });
+    return sendLedgerExport(res, {
+      accountId: account.id,
+      title: `Ledger — ${account.name}`,
+      subtitle: account.code,
+      filename: `ledger-${account.code}.csv`,
+      format,
+      currencyView,
+      startDate: startDate ? new Date(startDate as string) : undefined,
+      endDate: endDate ? new Date(endDate as string) : undefined,
+    });
+  }
+
+  const transactions = await getLedgerTransactions({
+    startDate: startDate ? new Date(startDate as string) : undefined,
+    endDate: endDate ? new Date(endDate as string) : undefined,
+  });
+  const rows = buildLedgerRows(transactions, currencyView).reverse();
+
+  if (format === 'html') {
+    const body = `
+      <h1>General Ledger</h1>
+      <p class="meta">${currencyView} view · ${rows.length} transaction(s)</p>
+      <table>
+        <thead><tr><th>Date</th><th>Entry</th><th>Account</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr><td>${r.journalEntry?.date ? new Date(r.journalEntry.date).toISOString().split('T')[0] : ''}</td><td>${r.journalEntry?.entryNumber || ''}</td><td>${r.account?.name || ''}</td><td>${r.description || r.journalEntry?.description || ''}</td><td class="num">${r.debit}</td><td class="num">${r.credit}</td><td class="num">${r.runningBalance}</td></tr>`).join('')}</tbody>
+      </table>`;
+    const { wrapHtmlDocument } = await import('../utils/exportHelpers');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(wrapHtmlDocument('General Ledger', body));
+  }
+
+  const { rowsToCsv } = await import('../utils/exportHelpers');
+  const csv = rowsToCsv(
+    ['Date', 'Entry', 'Account', 'Description', 'Debit', 'Credit', 'Balance', 'Currency'],
+    rows.map((r) => [
+      r.journalEntry?.date ? new Date(r.journalEntry.date).toISOString().split('T')[0] : '',
+      r.journalEntry?.entryNumber || '',
+      r.account?.name || '',
+      r.description || r.journalEntry?.description || '',
+      r.debit,
+      r.credit,
+      r.runningBalance,
+      r.displayCurrency,
+    ])
+  );
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="general-ledger.csv"');
+  return res.send(csv);
 }

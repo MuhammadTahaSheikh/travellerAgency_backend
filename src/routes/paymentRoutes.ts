@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as payment from '../controllers/paymentController';
-import { authenticate, authorize } from '../middleware/auth';
+import { authenticate, authorize, authorizeMinRole } from '../middleware/auth';
 
 const router = Router();
 
@@ -10,7 +10,9 @@ router.post('/', payment.createPayment);
 router.post('/:id/verify', payment.verifyPayment);
 router.get('/daily-collection', payment.getDailyCollection);
 router.get('/accounts', payment.getAccounts);
-router.post('/accounts', payment.createAccount);
+router.post('/accounts', authorize('SUPER_ADMIN'), payment.createAccount);
+router.put('/accounts/:id', authorize('SUPER_ADMIN'), payment.updateAccount);
+router.delete('/accounts/:id', authorize('SUPER_ADMIN'), payment.deactivateAccount);
 router.delete('/:id', authorize('SUPER_ADMIN'), payment.deletePayment);
 
 export default router;

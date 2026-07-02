@@ -1,20 +1,33 @@
 import { Response } from 'express';
 import prisma from '../config/database';
 import { AuthRequest } from '../types';
-import { paginate, formatPagination, generateNumber } from '../utils/helpers';
+import { paginate, formatPagination, paginateSearch, generateNumber } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createVendorAccount } from '../services/vendorService';
 import { createJournalEntry } from '../services/ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
-import { getLedgerTransactions, buildLedgerRows } from '../services/ledgerService';
+import { getLedgerTransactions, buildLedgerRows, CurrencyView } from '../services/ledgerService';
+import { sendLedgerExport } from '../utils/ledgerExport';
 
 export async function getVendors(req: AuthRequest, res: Response) {
-  const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
+  const search = (req.query.search as string)?.trim();
+  const useSearchPagination = Boolean(search);
+  const { page, limit, skip } = useSearchPagination
+    ? paginateSearch(req.query.page as string, req.query.limit as string)
+    : paginate(req.query.page as string, req.query.limit as string);
   const category = req.query.category as string;
 
   const where: Record<string, unknown> = { isActive: true };
   if (category) where.category = category;
+  if (search) {
+    where.OR = [
+      { name: { contains: search } },
+      { contactPerson: { contains: search } },
+      { email: { contains: search } },
+      { phone: { contains: search } },
+    ];
+  }
 
   const [vendors, total] = await Promise.all([
     prisma.vendor.findMany({
@@ -104,6 +117,26 @@ export async function getVendorLedger(req: AuthRequest, res: Response) {
       balance: Number(vendor.account.balance),
       transactions: rows,
     },
+  });
+}
+
+export async function exportVendorLedger(req: AuthRequest, res: Response) {
+  const format = (req.query.format as string) || 'csv';
+  const currencyView: CurrencyView = req.query.currency === 'SAR' ? 'SAR' : 'PKR';
+  const vendor = await prisma.vendor.findUnique({
+    where: { id: paramId(req) },
+    include: { account: true },
+  });
+  if (!vendor?.account) return res.status(404).json({ success: false, error: 'Vendor account not found' });
+
+  await logActivity(req, 'EXPORT', 'VendorLedger', vendor.id);
+  return sendLedgerExport(res, {
+    accountId: vendor.account.id,
+    title: `Vendor Ledger — ${vendor.name}`,
+    subtitle: vendor.category,
+    filename: `vendor-ledger-${vendor.name.replace(/\s+/g, '-').toLowerCase()}.csv`,
+    format,
+    currencyView,
   });
 }
 
