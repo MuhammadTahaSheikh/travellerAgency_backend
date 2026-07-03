@@ -233,18 +233,22 @@ export async function getVendorPayables(_req: AuthRequest, res: Response) {
   });
 
   const payables = vendors.map((v) => {
-    const allocated = v.costAllocations.reduce((s, a) => s + Number(a.amount), 0);
+    const legacyAllocated = v.costAllocations.reduce((s, a) => s + Number(a.amount), 0);
     const paid = v.expenses.reduce((s, e) => s + Number(e.amount), 0);
-    const balance = allocated - paid;
+    // Both legacy cost allocations and confirmed (POSTED) vendor postings credit the vendor
+    // account, while vendor payments debit it. A payable therefore shows as a negative account
+    // balance, so outstanding is its inverse. Fall back to the legacy calc when no ledger movement.
+    const ledgerBalance = Number(v.account?.balance || 0);
+    const outstanding = ledgerBalance !== 0 ? -ledgerBalance : legacyAllocated - paid;
     return {
       vendorId: v.id,
       vendorName: v.name,
       vendorCode: v.vendorCode,
       category: v.category,
-      accountBalance: Number(v.account?.balance || 0),
-      totalAllocated: allocated,
+      accountBalance: ledgerBalance,
+      totalAllocated: outstanding + paid,
       totalPaid: paid,
-      outstanding: balance,
+      outstanding,
     };
   });
 

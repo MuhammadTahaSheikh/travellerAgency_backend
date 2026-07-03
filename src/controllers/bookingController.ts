@@ -306,6 +306,10 @@ export async function updateBooking(req: AuthRequest, res: Response) {
       const message = err instanceof Error ? err.message : 'Failed to confirm booking';
       return res.status(500).json({ success: false, error: `Booking confirmation failed: ${message}` });
     }
+  } else if (booking.status === 'CONFIRMED' && serviceItems) {
+    // Already-confirmed booking whose services were edited — refresh the arrival schedule
+    // so accommodation/transport changes are reflected.
+    await createCheckInsFromBooking(booking.id);
   }
 
   return res.json({ success: true, data: booking, invoice });

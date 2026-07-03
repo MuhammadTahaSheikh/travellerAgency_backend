@@ -18,7 +18,7 @@ export async function getNextTradePartnerId(tx?: Prisma.TransactionClient): Prom
     create: { key: COUNTER_KEY, value: String(nextNum), category: 'customers' },
   });
 
-  return `HTP${nextNum}`;
+  return `HTP-${nextNum}`;
 }
 
 /**

@@ -335,35 +335,68 @@ export async function createCheckInsFromBooking(bookingId: string, tx?: TxClient
 
   if (!booking) return [];
 
+  // Replace any previously generated schedule rows for this booking so edits to the
+  // booking (hotels/transport sectors/dates) stay reflected on the arrival schedule.
+  await client.checkInRecord.deleteMany({ where: { bookingId } });
+
   const records = [];
-  const guestName = `${booking.customer.firstName} ${booking.customer.lastName}`;
+  const guestName = booking.customer
+    ? `${booking.customer.firstName} ${booking.customer.lastName}`.trim()
+    : booking.guestName || 'Guest';
 
   for (const item of booking.serviceItems) {
-    if (item.serviceType !== 'HOTEL') continue;
     const details = item.details as (Record<string, string> & { rows?: Record<string, string>[] }) | null;
-    // Multi-row accommodations store each hotel/room as a row; fall back to the flat detail shape.
+    // Multi-row services store each hotel/sector as a row; fall back to the flat detail shape.
     const rows = Array.isArray(details?.rows) && details!.rows!.length > 0 ? details!.rows! : [details || {}];
 
-    for (const row of rows) {
-      const checkInDate = row?.checkInDate ? new Date(row.checkInDate) : booking.travelDate;
-      if (!checkInDate) continue;
+    if (item.serviceType === 'HOTEL') {
+      for (const row of rows) {
+        const checkInDate = row?.checkInDate ? new Date(row.checkInDate) : booking.travelDate;
+        if (!checkInDate) continue;
 
-      const hotelName = row?.hotelName || item.description;
-      const existing = await client.checkInRecord.findFirst({
-        where: { bookingId, hotelName },
-      });
-      if (existing) continue;
+        const hotelName = row?.hotelName || item.description;
+        const roomDetails = [row?.roomType || row?.roomDetails, row?.mealPlan, row?.view, row?.city]
+          .filter(Boolean)
+          .join(' · ') || null;
 
-      const record = await client.checkInRecord.create({
-        data: {
-          bookingId,
-          hotelName,
-          checkInDate,
-          guestName,
-          roomDetails: row?.roomType || row?.roomDetails || null,
-        },
-      });
-      records.push(record);
+        records.push(
+          await client.checkInRecord.create({
+            data: {
+              bookingId,
+              scheduleType: 'HOTEL',
+              hotelName,
+              checkInDate,
+              guestName,
+              roomDetails,
+            },
+          })
+        );
+      }
+      continue;
+    }
+
+    if (item.serviceType === 'TRANSPORT') {
+      for (const row of rows) {
+        const transportDate = row?.date ? new Date(row.date) : booking.travelDate;
+        if (!transportDate) continue;
+
+        const sector = row?.sector || item.description || '';
+        const [pickup, dropoff] = sector.split(/\s*[-–>]\s*/);
+
+        records.push(
+          await client.checkInRecord.create({
+            data: {
+              bookingId,
+              scheduleType: 'TRANSPORT',
+              transportDate,
+              pickupLocation: pickup || sector || null,
+              dropoffLocation: dropoff || null,
+              roomDetails: row?.vehicleType || null,
+              guestName,
+            },
+          })
+        );
+      }
     }
   }
 
