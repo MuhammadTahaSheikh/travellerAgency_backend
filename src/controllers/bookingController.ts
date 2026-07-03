@@ -8,10 +8,9 @@ import { logActivity } from '../middleware/activityLogger';
 import { createBookingConfirmation } from '../services/notificationService';
 import {
   generateInvoiceFromBooking,
-  confirmInvoice,
   createCheckInsFromBooking,
+  syncBookingInvoiceAndLedger,
 } from '../services/invoiceService';
-import { createVendorPostingsFromBooking } from '../services/vendorPostingService';
 
 export async function getBookings(req: AuthRequest, res: Response) {
   const search = (req.query.search as string)?.trim();
@@ -236,11 +235,7 @@ async function handleBookingConfirmed(bookingId: string, userId: string) {
 
   let invoice;
   await prisma.$transaction(async (tx) => {
-    invoice = await generateInvoiceFromBooking(bookingId, 14, tx);
-    await confirmInvoice(invoice.id, tx);
-    // Vendor costs are recorded as PENDING (Unposted) postings; they hit the ledger only
-    // once confirmed on the vendor postings screen.
-    await createVendorPostingsFromBooking(bookingId, tx);
+    invoice = await syncBookingInvoiceAndLedger(bookingId, tx);
   }, TX_OPTS);
 
   await createCheckInsFromBooking(bookingId);
@@ -249,6 +244,15 @@ async function handleBookingConfirmed(bookingId: string, userId: string) {
     where: { id: invoice!.id },
     include: { customer: true, booking: true, items: true },
   });
+}
+
+async function resyncConfirmedBooking(bookingId: string) {
+  let invoice;
+  await prisma.$transaction(async (tx) => {
+    invoice = await syncBookingInvoiceAndLedger(bookingId, tx);
+  }, TX_OPTS);
+  await createCheckInsFromBooking(bookingId);
+  return invoice;
 }
 
 export async function updateBooking(req: AuthRequest, res: Response) {
@@ -306,10 +310,14 @@ export async function updateBooking(req: AuthRequest, res: Response) {
       const message = err instanceof Error ? err.message : 'Failed to confirm booking';
       return res.status(500).json({ success: false, error: `Booking confirmation failed: ${message}` });
     }
-  } else if (booking.status === 'CONFIRMED' && serviceItems) {
-    // Already-confirmed booking whose services were edited — refresh the arrival schedule
-    // so accommodation/transport changes are reflected.
-    await createCheckInsFromBooking(booking.id);
+  } else if (booking.status === 'CONFIRMED') {
+    // Re-save of an already-confirmed booking — re-sync invoice/ledger and travel schedule.
+    try {
+      invoice = await resyncConfirmedBooking(booking.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to sync booking';
+      return res.status(500).json({ success: false, error: `Booking saved but sync failed: ${message}` });
+    }
   }
 
   return res.json({ success: true, data: booking, invoice });

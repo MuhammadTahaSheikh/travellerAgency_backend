@@ -6,7 +6,20 @@ import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createJournalEntry, resolvePaymentCreditAccount, reverseJournalEntry } from '../services/ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
+import { createCheckInsFromBooking } from '../services/invoiceService';
 import { createSchedulesFromInvoice } from '../services/scheduleService';
+
+async function syncTravelScheduleForInvoice(invoiceId: string) {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { bookingId: true },
+  });
+  if (invoice?.bookingId) {
+    await createCheckInsFromBooking(invoice.bookingId);
+    return;
+  }
+  await createSchedulesFromInvoice(invoiceId);
+}
 
 export async function getPayments(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
@@ -161,7 +174,7 @@ export async function createPayment(req: AuthRequest, res: Response) {
     }, TX_OPTS);
 
     if (payment.verified && payment.invoiceId) {
-      await createSchedulesFromInvoice(payment.invoiceId);
+      await syncTravelScheduleForInvoice(payment.invoiceId);
     }
 
     await logActivity(req, 'CREATE', 'Payment', payment.id);
@@ -254,7 +267,7 @@ export async function verifyPayment(req: AuthRequest, res: Response) {
     await logActivity(req, 'UPDATE', 'Payment', payment.id, 'Verified');
 
     if (payment.invoiceId) {
-      await createSchedulesFromInvoice(payment.invoiceId);
+      await syncTravelScheduleForInvoice(payment.invoiceId);
     }
 
     return res.json({

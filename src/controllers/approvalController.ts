@@ -4,6 +4,7 @@ import { AuthRequest } from '../types';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { generateVouchersForApprovedInvoice } from '../services/voucherService';
+import { createCheckInsFromBooking } from '../services/invoiceService';
 
 export async function getPendingApprovals(_req: AuthRequest, res: Response) {
   const invoices = await prisma.invoice.findMany({
@@ -87,6 +88,14 @@ export async function approveInvoice(req: AuthRequest, res: Response) {
     vouchers = await generateVouchersForApprovedInvoice(invoice.id);
   } catch {
     // Voucher generation optional if no hotel/transport services
+  }
+
+  if (invoice.bookingId) {
+    try {
+      await createCheckInsFromBooking(invoice.bookingId);
+    } catch {
+      // Schedule sync should not block approval
+    }
   }
 
   await logActivity(req, 'UPDATE', 'Invoice', invoice.id, 'Approved by super admin');

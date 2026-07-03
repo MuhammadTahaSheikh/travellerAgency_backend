@@ -8,6 +8,7 @@ import {
 import { createJournalEntry, createCustomerAccount } from './ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from './currencyService';
 import { logoHtml, BRAND_NAME, BRAND_TAGLINE } from './documentBrand';
+import { createVendorPostingsFromBooking } from './vendorPostingService';
 import {
   createVendorAccount,
   getOrCreateVendorByCategory,
@@ -65,7 +66,16 @@ export async function generateInvoiceFromBooking(bookingId: string, dueDays = 14
   const existing = await client.invoice.findFirst({ where: { bookingId, status: { not: 'CANCELLED' } } });
   if (existing) return existing;
 
-  const items: { description: string; quantity: number; unitPrice: number; amount: number; serviceType?: string }[] = [];
+  const items: {
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    amount: number;
+    costAmount?: number;
+    vendorId?: string;
+    serviceType?: string;
+    details?: unknown;
+  }[] = [];
 
   if (booking.package) {
     items.push({
@@ -83,7 +93,10 @@ export async function generateInvoiceFromBooking(bookingId: string, dueDays = 14
       quantity: 1,
       unitPrice: Number(item.amount),
       amount: Number(item.amount),
+      costAmount: Number(item.costAmount || 0),
+      vendorId: item.vendorId || undefined,
       serviceType: item.serviceType,
+      details: item.details || undefined,
     });
   }
 
@@ -125,7 +138,10 @@ export async function generateInvoiceFromBooking(bookingId: string, dueDays = 14
           quantity: i.quantity,
           unitPrice: i.unitPrice,
           amount: i.amount,
+          costAmount: i.costAmount ?? 0,
+          vendorId: i.vendorId,
           serviceType: i.serviceType as 'PACKAGE' | 'TICKET' | 'VISA' | 'HOTEL' | 'TRANSPORT' | undefined,
+          details: i.details ?? undefined,
         })),
       },
     },
@@ -141,14 +157,22 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
     });
 
     if (!invoice) throw new Error('Invoice not found');
-    if (invoice.confirmedAt) throw new Error('Invoice already confirmed');
+    if (invoice.confirmedAt) {
+      return client.invoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+        include: { items: true, customer: true, booking: true },
+      });
+    }
     if (invoice.status === 'CANCELLED') throw new Error('Cannot confirm cancelled invoice');
 
     let customerAccount = invoice.customer?.account;
     if (!customerAccount) {
+      const customerLabel = invoice.customer?.customerType === 'B2B' && invoice.customer.companyName
+        ? invoice.customer.companyName
+        : `${invoice.customer?.firstName} ${invoice.customer?.lastName}`;
       customerAccount = await createCustomerAccount(
         invoice.customerId,
-        `${invoice.customer?.firstName} ${invoice.customer?.lastName}`,
+        customerLabel,
         client,
       );
     }
@@ -193,6 +217,16 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
 
   if (tx) return run(tx);
   return prisma.$transaction(run, TX_OPTS);
+}
+
+/** Idempotently ensures a booking has an invoice, customer ledger entry, and vendor postings. */
+export async function syncBookingInvoiceAndLedger(bookingId: string, tx?: TxClient) {
+  const invoice = await generateInvoiceFromBooking(bookingId, 14, tx);
+  if (!invoice.confirmedAt) {
+    await confirmInvoice(invoice.id, tx);
+  }
+  await createVendorPostingsFromBooking(bookingId, tx);
+  return invoice;
 }
 
 export async function renderInvoiceHtml(invoiceId: string, baseUrl?: string) {
@@ -340,9 +374,13 @@ export async function createCheckInsFromBooking(bookingId: string, tx?: TxClient
   await client.checkInRecord.deleteMany({ where: { bookingId } });
 
   const records = [];
-  const guestName = booking.customer
-    ? `${booking.customer.firstName} ${booking.customer.lastName}`.trim()
-    : booking.guestName || 'Guest';
+  const guestName = booking.customer?.customerType === 'B2B' && booking.customer.companyName
+    ? booking.customer.companyName
+    : booking.customer
+      ? `${booking.customer.firstName} ${booking.customer.lastName}`.trim()
+      : booking.guestName || 'Guest';
+
+  const fallbackDate = booking.travelDate || booking.returnDate || booking.createdAt;
 
   for (const item of booking.serviceItems) {
     const details = item.details as (Record<string, string> & { rows?: Record<string, string>[] }) | null;
@@ -351,7 +389,7 @@ export async function createCheckInsFromBooking(bookingId: string, tx?: TxClient
 
     if (item.serviceType === 'HOTEL') {
       for (const row of rows) {
-        const checkInDate = row?.checkInDate ? new Date(row.checkInDate) : booking.travelDate;
+        const checkInDate = row?.checkInDate ? new Date(row.checkInDate) : fallbackDate ? new Date(fallbackDate) : null;
         if (!checkInDate) continue;
 
         const hotelName = row?.hotelName || item.description;
@@ -377,7 +415,7 @@ export async function createCheckInsFromBooking(bookingId: string, tx?: TxClient
 
     if (item.serviceType === 'TRANSPORT') {
       for (const row of rows) {
-        const transportDate = row?.date ? new Date(row.date) : booking.travelDate;
+        const transportDate = row?.date ? new Date(row.date) : fallbackDate ? new Date(fallbackDate) : null;
         if (!transportDate) continue;
 
         const sector = row?.sector || item.description || '';
