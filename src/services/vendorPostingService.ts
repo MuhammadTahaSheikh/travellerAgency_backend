@@ -110,7 +110,7 @@ export async function postVendorCostToLedger(
       client
     );
 
-    return client.vendorPosting.update({
+    const updated = await client.vendorPosting.update({
       where: { id: postingId },
       data: {
         status: 'POSTED',
@@ -120,6 +120,20 @@ export async function postVendorCostToLedger(
       },
       include: { vendor: true, invoice: true },
     });
+
+    // Reflect the posting on the travel schedule so hotel/transport rows for this
+    // booking/invoice show as "Posted" once the vendor cost hits the ledger.
+    if ((posting.serviceType === 'HOTEL' || posting.serviceType === 'TRANSPORT') && (posting.bookingId || posting.invoiceId)) {
+      await client.checkInRecord.updateMany({
+        where: {
+          scheduleType: posting.serviceType,
+          ...(posting.bookingId ? { bookingId: posting.bookingId } : { invoiceId: posting.invoiceId }),
+        },
+        data: { vendorPosted: true },
+      });
+    }
+
+    return updated;
   };
 
   if (tx) return run(tx);
