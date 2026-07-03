@@ -9,9 +9,9 @@ import { createBookingConfirmation } from '../services/notificationService';
 import {
   generateInvoiceFromBooking,
   confirmInvoice,
-  allocateVendorCosts,
   createCheckInsFromBooking,
 } from '../services/invoiceService';
+import { createVendorPostingsFromBooking } from '../services/vendorPostingService';
 
 export async function getBookings(req: AuthRequest, res: Response) {
   const search = (req.query.search as string)?.trim();
@@ -238,7 +238,9 @@ async function handleBookingConfirmed(bookingId: string, userId: string) {
   await prisma.$transaction(async (tx) => {
     invoice = await generateInvoiceFromBooking(bookingId, 14, tx);
     await confirmInvoice(invoice.id, tx);
-    await allocateVendorCosts(bookingId, tx);
+    // Vendor costs are recorded as PENDING (Unposted) postings; they hit the ledger only
+    // once confirmed on the vendor postings screen.
+    await createVendorPostingsFromBooking(bookingId, tx);
   }, TX_OPTS);
 
   await createCheckInsFromBooking(bookingId);

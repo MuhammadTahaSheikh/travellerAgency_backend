@@ -1,7 +1,7 @@
 import prisma, { TX_OPTS } from '../config/database';
 import { Prisma, ServiceType } from '@prisma/client';
 import { createJournalEntry } from './ledgerService';
-import { createVendorAccount } from './vendorService';
+import { createVendorAccount, getOrCreateVendorByCategory, vendorCategoryFromService } from './vendorService';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -120,6 +120,88 @@ export async function postVendorCostToLedger(
       },
       include: { vendor: true, invoice: true },
     });
+  };
+
+  if (tx) return run(tx);
+  return prisma.$transaction(run, TX_OPTS);
+}
+
+/**
+ * Creates vendor postings for a confirmed booking's service items. Postings default to
+ * PENDING ("Unposted") — they only hit the ledger once explicitly confirmed on the vendor
+ * postings screen. Row-based services (accommodation / transport) generate one posting per
+ * sector/row so each vendor and currency is tracked independently.
+ */
+export async function createVendorPostingsFromBooking(bookingId: string, tx?: TxClient) {
+  const run = async (client: TxClient) => {
+    const booking = await client.booking.findUnique({
+      where: { id: bookingId },
+      include: { serviceItems: { include: { vendor: true } } },
+    });
+    if (!booking) return [];
+
+    const existing = await client.vendorPosting.count({ where: { bookingId } });
+    if (existing > 0) return [];
+
+    const resolveVendorId = async (serviceType: string, provided?: string | null) => {
+      if (provided) return provided;
+      const vendor = await getOrCreateVendorByCategory(vendorCategoryFromService(serviceType), client);
+      return vendor.id;
+    };
+
+    const postings = [];
+
+    for (const item of booking.serviceItems) {
+      const details = (item.details as (Record<string, unknown> & { rows?: Record<string, string>[] }) | null) || {};
+      const currency: 'PKR' | 'SAR' = details.currency === 'SAR' ? 'SAR' : 'PKR';
+      const exchangeRate = details.exchangeRate ? Number(details.exchangeRate) : undefined;
+      const rowBased = item.serviceType === 'HOTEL' || item.serviceType === 'TRANSPORT';
+      const rows = Array.isArray(details.rows) ? details.rows : [];
+
+      if (rowBased && rows.length > 0) {
+        for (const row of rows) {
+          const cost = Number(row.costTotal || 0);
+          if (cost <= 0) continue;
+          const label = item.serviceType === 'HOTEL'
+            ? [row.hotelName, row.city, row.roomType].filter(Boolean).join(' - ')
+            : [row.sector, row.vehicleType].filter(Boolean).join(' - ');
+          const posting = await createVendorPosting(
+            {
+              bookingId,
+              vendorId: await resolveVendorId(item.serviceType, row.vendorId),
+              serviceType: item.serviceType,
+              description: label || item.description,
+              expectedCost: cost,
+              currency,
+              exchangeRate,
+              postingType: 'PENDING',
+            },
+            client
+          );
+          postings.push(posting);
+        }
+        continue;
+      }
+
+      const cost = details.costOriginal != null ? Number(details.costOriginal) : Number(item.costAmount);
+      if (cost <= 0) continue;
+      const posting = await createVendorPosting(
+        {
+          bookingId,
+          vendorId: await resolveVendorId(item.serviceType, item.vendorId),
+          serviceType: item.serviceType,
+          description: item.description,
+          expectedCost: cost,
+          currency,
+          exchangeRate,
+          postingType: 'PENDING',
+        },
+        client
+      );
+      postings.push(posting);
+    }
+
+    return postings;
   };
 
   if (tx) return run(tx);

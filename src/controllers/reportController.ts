@@ -35,7 +35,7 @@ function sumRecord(values: Record<string, number>) {
 export async function getIncomeStatement(req: AuthRequest, res: Response) {
   const { start, end } = getReportPeriod(req.query.startDate as string, req.query.endDate as string);
 
-  const [incomeEntries, payments, expenses, costAllocations] = await Promise.all([
+  const [incomeEntries, payments, expenses, costAllocations, postedVendorPostings] = await Promise.all([
     prisma.incomeEntry.findMany({ where: { entryDate: { gte: start, lte: end } } }),
     prisma.payment.findMany({ where: { paymentDate: { gte: start, lte: end } } }),
     prisma.expense.findMany({
@@ -45,6 +45,9 @@ export async function getIncomeStatement(req: AuthRequest, res: Response) {
     prisma.vendorCostAllocation.findMany({
       where: { createdAt: { gte: start, lte: end } },
       include: { vendor: { select: { name: true } } },
+    }),
+    prisma.vendorPosting.findMany({
+      where: { status: 'POSTED', postedAt: { gte: start, lte: end } },
     }),
   ]);
 
@@ -60,6 +63,12 @@ export async function getIncomeStatement(req: AuthRequest, res: Response) {
   costAllocations.forEach((a) => {
     const key = a.serviceType;
     costOfSales[key] = (costOfSales[key] || 0) + Number(a.amount);
+  });
+  // Booking vendor costs now flow through vendor postings; once posted, recognise them in PKR.
+  postedVendorPostings.forEach((p) => {
+    const amount = Number(p.actualCost ?? p.expectedCost);
+    const pkr = p.currency === 'SAR' ? amount * Number(p.exchangeRate || 1) : amount;
+    costOfSales[p.serviceType] = (costOfSales[p.serviceType] || 0) + pkr;
   });
 
   const operatingExpenses: Record<string, number> = {};
