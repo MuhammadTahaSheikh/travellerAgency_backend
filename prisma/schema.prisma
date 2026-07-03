@@ -277,8 +277,9 @@ model PackageDestination {
 
 model Vendor {
   id                  String                 @id @default(uuid())
+  vendorCode          String?                @unique
   name                String
-  category            VendorCategory
+  category            VendorCategory         @default(OTHER)
   contactPerson       String?
   email               String?
   phone               String?

@@ -5,6 +5,7 @@ import { paginate, formatPagination, paginateSearch, generateNumber } from '../u
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
 import { createVendorAccount } from '../services/vendorService';
+import { getNextVendorCode } from '../services/tradePartnerService';
 import { createJournalEntry } from '../services/ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
 import { getLedgerTransactions, buildLedgerRows, CurrencyView } from '../services/ledgerService';
@@ -22,6 +23,7 @@ export async function getVendors(req: AuthRequest, res: Response) {
   if (category) where.category = category;
   if (search) {
     where.OR = [
+      { vendorCode: { contains: search } },
       { name: { contains: search } },
       { contactPerson: { contains: search } },
       { email: { contains: search } },
@@ -60,12 +62,18 @@ export async function getVendor(req: AuthRequest, res: Response) {
 export async function createVendor(req: AuthRequest, res: Response) {
   const { name, category, contactPerson, email, phone, address } = req.body;
 
-  if (!name || !category) {
-    return res.status(400).json({ success: false, error: 'Name and category are required' });
+  if (!name) {
+    return res.status(400).json({ success: false, error: 'Vendor name is required' });
   }
 
-  const vendor = await prisma.vendor.create({
-    data: { name, category, contactPerson, email, phone, address },
+  // A vendor can supply multiple service types, so category is optional (defaults to OTHER).
+  const vendorCategory = category || 'OTHER';
+
+  const vendor = await prisma.$transaction(async (tx) => {
+    const vendorCode = await getNextVendorCode(tx);
+    return tx.vendor.create({
+      data: { vendorCode, name, category: vendorCategory, contactPerson, email, phone, address },
+    });
   });
 
   await createVendorAccount(vendor.id, vendor.name);
@@ -231,6 +239,7 @@ export async function getVendorPayables(_req: AuthRequest, res: Response) {
     return {
       vendorId: v.id,
       vendorName: v.name,
+      vendorCode: v.vendorCode,
       category: v.category,
       accountBalance: Number(v.account?.balance || 0),
       totalAllocated: allocated,
