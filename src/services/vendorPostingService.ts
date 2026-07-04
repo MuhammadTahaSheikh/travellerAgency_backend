@@ -249,6 +249,154 @@ export async function postVendorCostToLedger(
   return prisma.$transaction(run, TX_OPTS);
 }
 
+type BookingPostingSpec = {
+  key: string;
+  serviceType: ServiceType;
+  description: string;
+  expectedCost: number;
+  vendorId?: string;
+  currency: 'PKR' | 'SAR';
+  exchangeRate?: number;
+};
+
+type ServiceItemRow = {
+  serviceType: ServiceType;
+  description: string;
+  costAmount: unknown;
+  vendorId?: string | null;
+  details?: (Record<string, unknown> & { rows?: Record<string, string>[] }) | null;
+};
+
+const resolveVendorId = (provided?: string | null) => (provided ? provided : undefined);
+
+function rowPostingLabel(serviceType: ServiceType, row: Record<string, string>, fallback: string) {
+  if (serviceType === 'HOTEL') {
+    return [row.hotelName, row.city, row.roomType].filter(Boolean).join(' - ') || fallback;
+  }
+  if (serviceType === 'TRANSPORT') {
+    return [row.sector, row.vehicleType].filter(Boolean).join(' - ') || fallback;
+  }
+  return fallback;
+}
+
+/** Build expected vendor posting lines from booking service items (same order as create). */
+export function buildPostingSpecsFromServiceItems(serviceItems: ServiceItemRow[]): BookingPostingSpec[] {
+  const specs: BookingPostingSpec[] = [];
+
+  for (const item of serviceItems) {
+    const details = item.details || {};
+    const currency: 'PKR' | 'SAR' = details.currency === 'SAR' ? 'SAR' : 'PKR';
+    const exchangeRate = details.exchangeRate ? Number(details.exchangeRate) : undefined;
+    const rowBased = item.serviceType === 'HOTEL' || item.serviceType === 'TRANSPORT';
+    const rows = Array.isArray(details.rows) ? details.rows : [];
+
+    if (rowBased && rows.length > 0) {
+      for (const row of rows) {
+        const cost = Number(row.costTotal || 0);
+        if (cost <= 0) continue;
+        const description = rowPostingLabel(item.serviceType, row, item.description);
+        specs.push({
+          key: `${item.serviceType}::${description}`,
+          serviceType: item.serviceType,
+          description,
+          expectedCost: cost,
+          vendorId: resolveVendorId(row.vendorId),
+          currency,
+          exchangeRate,
+        });
+      }
+      continue;
+    }
+
+    const cost = details.costOriginal != null ? Number(details.costOriginal) : Number(item.costAmount);
+    if (cost <= 0) continue;
+    specs.push({
+      key: `${item.serviceType}::${item.description}`,
+      serviceType: item.serviceType,
+      description: item.description,
+      expectedCost: cost,
+      vendorId: resolveVendorId(item.vendorId),
+      currency,
+      exchangeRate,
+    });
+  }
+
+  return specs;
+}
+
+/**
+ * Sync PENDING vendor postings from the booking's current service items — updates vendor,
+ * cost, and currency when the booking is edited after confirmation.
+ */
+export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx?: TxClient) {
+  const run = async (client: TxClient) => {
+    const booking = await client.booking.findUnique({
+      where: { id: bookingId },
+      include: { serviceItems: true },
+    });
+    if (!booking) return [];
+
+    const specs = buildPostingSpecsFromServiceItems(booking.serviceItems as ServiceItemRow[]);
+    const pending = await client.vendorPosting.findMany({
+      where: { bookingId, status: 'PENDING' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (specs.length === 0 && pending.length === 0) return [];
+
+    const pendingByKey = new Map<string, typeof pending>();
+    for (const posting of pending) {
+      const key = `${posting.serviceType}::${posting.description}`;
+      const list = pendingByKey.get(key) || [];
+      list.push(posting);
+      pendingByKey.set(key, list);
+    }
+
+    const updated: Awaited<ReturnType<typeof createVendorPosting>>[] = [];
+
+    for (const spec of specs) {
+      const queue = pendingByKey.get(spec.key) || [];
+      const posting = queue.shift();
+      pendingByKey.set(spec.key, queue);
+
+      if (posting) {
+        const result = await client.vendorPosting.update({
+          where: { id: posting.id },
+          data: {
+            vendorId: spec.vendorId ?? null,
+            expectedCost: spec.expectedCost,
+            currency: spec.currency,
+            exchangeRate: spec.exchangeRate,
+          },
+          include: { vendor: true, invoiceItem: true },
+        });
+        updated.push(result);
+        continue;
+      }
+
+      const created = await createVendorPosting(
+        {
+          bookingId,
+          vendorId: spec.vendorId,
+          serviceType: spec.serviceType,
+          description: spec.description,
+          expectedCost: spec.expectedCost,
+          currency: spec.currency,
+          exchangeRate: spec.exchangeRate,
+          postingType: 'PENDING',
+        },
+        client
+      );
+      updated.push(created);
+    }
+
+    return updated;
+  };
+
+  if (tx) return run(tx);
+  return prisma.$transaction(run, TX_OPTS);
+}
+
 /**
  * Creates vendor postings for a confirmed booking's service items. Postings default to
  * PENDING ("Unposted") — cost hits the unposted vendor costs ledger immediately; on post,
@@ -256,62 +404,28 @@ export async function postVendorCostToLedger(
  */
 export async function createVendorPostingsFromBooking(bookingId: string, tx?: TxClient) {
   const run = async (client: TxClient) => {
+    const existing = await client.vendorPosting.count({ where: { bookingId } });
+    if (existing > 0) return syncPendingVendorPostingsFromBooking(bookingId, client);
+
     const booking = await client.booking.findUnique({
       where: { id: bookingId },
-      include: { serviceItems: { include: { vendor: true } } },
+      include: { serviceItems: true },
     });
     if (!booking) return [];
 
-    const existing = await client.vendorPosting.count({ where: { bookingId } });
-    if (existing > 0) return [];
-
-    const resolveVendorId = (provided?: string | null) => (provided ? provided : undefined);
-
+    const specs = buildPostingSpecsFromServiceItems(booking.serviceItems as ServiceItemRow[]);
     const postings = [];
 
-    for (const item of booking.serviceItems) {
-      const details = (item.details as (Record<string, unknown> & { rows?: Record<string, string>[] }) | null) || {};
-      const currency: 'PKR' | 'SAR' = details.currency === 'SAR' ? 'SAR' : 'PKR';
-      const exchangeRate = details.exchangeRate ? Number(details.exchangeRate) : undefined;
-      const rowBased = item.serviceType === 'HOTEL' || item.serviceType === 'TRANSPORT';
-      const rows = Array.isArray(details.rows) ? details.rows : [];
-
-      if (rowBased && rows.length > 0) {
-        for (const row of rows) {
-          const cost = Number(row.costTotal || 0);
-          if (cost <= 0) continue;
-          const label = item.serviceType === 'HOTEL'
-            ? [row.hotelName, row.city, row.roomType].filter(Boolean).join(' - ')
-            : [row.sector, row.vehicleType].filter(Boolean).join(' - ');
-          const posting = await createVendorPosting(
-            {
-              bookingId,
-              vendorId: resolveVendorId(row.vendorId),
-              serviceType: item.serviceType,
-              description: label || item.description,
-              expectedCost: cost,
-              currency,
-              exchangeRate,
-              postingType: 'PENDING',
-            },
-            client
-          );
-          postings.push(posting);
-        }
-        continue;
-      }
-
-      const cost = details.costOriginal != null ? Number(details.costOriginal) : Number(item.costAmount);
-      if (cost <= 0) continue;
+    for (const spec of specs) {
       const posting = await createVendorPosting(
         {
           bookingId,
-          vendorId: resolveVendorId(item.vendorId),
-          serviceType: item.serviceType,
-          description: item.description,
-          expectedCost: cost,
-          currency,
-          exchangeRate,
+          vendorId: spec.vendorId,
+          serviceType: spec.serviceType,
+          description: spec.description,
+          expectedCost: spec.expectedCost,
+          currency: spec.currency,
+          exchangeRate: spec.exchangeRate,
           postingType: 'PENDING',
         },
         client
