@@ -1,7 +1,7 @@
 import prisma, { TX_OPTS } from '../config/database';
 import { Prisma, ServiceType } from '@prisma/client';
 import { createJournalEntry } from './ledgerService';
-import { createVendorAccount, getOrCreateVendorByCategory, vendorCategoryFromService } from './vendorService';
+import { createVendorAccount } from './vendorService';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -157,11 +157,7 @@ export async function createVendorPostingsFromBooking(bookingId: string, tx?: Tx
     const existing = await client.vendorPosting.count({ where: { bookingId } });
     if (existing > 0) return [];
 
-    const resolveVendorId = async (serviceType: string, provided?: string | null) => {
-      if (provided) return provided;
-      const vendor = await getOrCreateVendorByCategory(vendorCategoryFromService(serviceType), client);
-      return vendor.id;
-    };
+    const resolveVendorId = (provided?: string | null) => (provided ? provided : undefined);
 
     const postings = [];
 
@@ -182,7 +178,7 @@ export async function createVendorPostingsFromBooking(bookingId: string, tx?: Tx
           const posting = await createVendorPosting(
             {
               bookingId,
-              vendorId: await resolveVendorId(item.serviceType, row.vendorId),
+              vendorId: resolveVendorId(row.vendorId),
               serviceType: item.serviceType,
               description: label || item.description,
               expectedCost: cost,
@@ -202,7 +198,7 @@ export async function createVendorPostingsFromBooking(bookingId: string, tx?: Tx
       const posting = await createVendorPosting(
         {
           bookingId,
-          vendorId: await resolveVendorId(item.serviceType, item.vendorId),
+          vendorId: resolveVendorId(item.vendorId),
           serviceType: item.serviceType,
           description: item.description,
           expectedCost: cost,

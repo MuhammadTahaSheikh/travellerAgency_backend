@@ -40,6 +40,10 @@ export async function createPostingRequest(req: AuthRequest, res: Response) {
     return res.status(400).json({ success: false, error: 'This vendor posting is already posted' });
   }
 
+  if (!posting.vendorId) {
+    return res.status(400).json({ success: false, error: 'Assign a vendor before requesting posting' });
+  }
+
   const existing = await prisma.postingRequest.findFirst({
     where: { vendorPostingId, status: 'PENDING' },
   });
