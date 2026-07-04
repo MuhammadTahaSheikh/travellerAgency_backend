@@ -5,7 +5,11 @@ import {
   allocateInvoiceNumber,
   resolveInvoiceNumber,
 } from './numberingService';
-import { createJournalEntry, createCustomerAccount } from './ledgerService';
+import {
+  createJournalEntry,
+  createCustomerAccount,
+  getOrCreateDeferredRevenueAccount,
+} from './ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from './currencyService';
 import { logoHtml, BRAND_NAME, BRAND_TAGLINE } from './documentBrand';
 import { createVendorPostingsFromBooking } from './vendorPostingService';
@@ -21,17 +25,6 @@ async function getInvoicePrefix(tx?: TxClient) {
   const client = tx || prisma;
   const setting = await client.setting.findUnique({ where: { key: 'invoice_prefix' } });
   return setting?.value || 'INV';
-}
-
-async function getOrCreateIncomeAccount(tx?: TxClient) {
-  const client = tx || prisma;
-  let account = await client.account.findFirst({ where: { code: 'INCOME-001' } });
-  if (!account) {
-    account = await client.account.create({
-      data: { name: 'Revenue Account', code: 'INCOME-001', type: 'REVENUE' },
-    });
-  }
-  return account;
 }
 
 async function getDefaultTemplate() {
@@ -177,7 +170,7 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
       );
     }
 
-    const incomeAccount = await getOrCreateIncomeAccount(client);
+    const deferredAccount = await getOrCreateDeferredRevenueAccount(client);
     const amount = Number(invoice.totalAmount);
     const rate = await getDefaultExchangeRate();
     const { amountSar } = convertCurrency(amount, 'PKR', rate);
@@ -195,9 +188,9 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
           exchangeRate: rate,
         },
         {
-          accountId: incomeAccount.id,
+          accountId: deferredAccount.id,
           credit: amount,
-          description: 'Revenue recognized',
+          description: 'Sale pending collection',
           currency: 'PKR',
           amountPkr: amount,
           amountSar,

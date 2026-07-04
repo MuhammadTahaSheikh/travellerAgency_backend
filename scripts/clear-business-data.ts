@@ -42,6 +42,7 @@ async function seedFreshDefaults() {
     { name: 'Cash Account', code: 'CASH-001', type: 'CASH' as const },
     { name: 'Bank Account', code: 'BANK-001', type: 'BANK' as const },
     { name: 'Income Account', code: 'INCOME-001', type: 'REVENUE' as const },
+    { name: 'Deferred Revenue', code: 'DEFERRED-001', type: 'REVENUE' as const },
     { name: 'Cost of Sales', code: 'COS-001', type: 'SUPPLIER' as const },
     { name: 'Unposted Vendor Costs', code: 'UNPOSTED-001', type: 'SUPPLIER' as const },
   ];

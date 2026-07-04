@@ -141,14 +141,101 @@ export async function recordIncomeEntry(
   );
 }
 
-async function getOrCreateIncomeAccount() {
-  let account = await prisma.account.findFirst({ where: { code: 'INCOME-001' } });
+export async function getOrCreateIncomeAccount(tx?: TxClient) {
+  const client = tx || prisma;
+  let account = await client.account.findFirst({ where: { code: 'INCOME-001' } });
   if (!account) {
-    account = await prisma.account.create({
+    account = await client.account.create({
       data: { name: 'Income Account', code: 'INCOME-001', type: 'REVENUE' },
     });
   }
   return account;
+}
+
+export async function getOrCreateDeferredRevenueAccount(tx?: TxClient) {
+  const client = tx || prisma;
+  let account = await client.account.findFirst({ where: { code: 'DEFERRED-001' } });
+  if (!account) {
+    account = await client.account.create({
+      data: { name: 'Deferred Revenue', code: 'DEFERRED-001', type: 'REVENUE' },
+    });
+  }
+  return account;
+}
+
+/** Cash collection plus revenue recognition when an invoice payment is verified. */
+export async function createVerifiedPaymentJournalEntry(
+  description: string,
+  params: {
+    receivingAccountId: string;
+    receivableAccountId: string;
+    amount: number;
+    payCurrency: 'PKR' | 'SAR';
+    rate: number;
+    amountPkr: number;
+    amountSar: number;
+    invoiceId?: string | null;
+    method?: string;
+    attachmentPath?: string;
+    reference?: string;
+    receiptPath?: string;
+  },
+  tx?: TxClient
+) {
+  const lines: Parameters<typeof createJournalEntry>[1] = [
+    {
+      accountId: params.receivingAccountId,
+      debit: params.amount,
+      description: 'Payment received',
+      currency: params.payCurrency,
+      exchangeRate: params.rate,
+      amountPkr: params.amountPkr,
+      amountSar: params.amountSar,
+      paymentMethod: params.method,
+      attachmentPath: params.attachmentPath,
+    },
+    {
+      accountId: params.receivableAccountId,
+      credit: params.amount,
+      description: 'Reduce receivable',
+      currency: params.payCurrency,
+      exchangeRate: params.rate,
+      amountPkr: params.amountPkr,
+      amountSar: params.amountSar,
+    },
+  ];
+
+  if (params.invoiceId) {
+    const deferredAccount = await getOrCreateDeferredRevenueAccount(tx);
+    const incomeAccount = await getOrCreateIncomeAccount(tx);
+    lines.push(
+      {
+        accountId: deferredAccount.id,
+        debit: params.amount,
+        description: 'Release deferred revenue',
+        currency: params.payCurrency,
+        exchangeRate: params.rate,
+        amountPkr: params.amountPkr,
+        amountSar: params.amountSar,
+      },
+      {
+        accountId: incomeAccount.id,
+        credit: params.amount,
+        description: 'Revenue recognized on payment',
+        currency: params.payCurrency,
+        exchangeRate: params.rate,
+        amountPkr: params.amountPkr,
+        amountSar: params.amountSar,
+      }
+    );
+  }
+
+  return createJournalEntry(
+    description,
+    lines,
+    { reference: params.reference, receiptPath: params.receiptPath },
+    tx
+  );
 }
 
 export async function getOrCreateReceivableAccount(tx?: TxClient) {

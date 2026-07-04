@@ -4,7 +4,11 @@ import { AuthRequest } from '../types';
 import { paginate, formatPagination, generateNumber, applyDateFilter, serializeForDeletedRecord } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
-import { createJournalEntry, resolvePaymentCreditAccount, reverseJournalEntry } from '../services/ledgerService';
+import {
+  createVerifiedPaymentJournalEntry,
+  resolvePaymentCreditAccount,
+  reverseJournalEntry,
+} from '../services/ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from '../services/currencyService';
 import { createCheckInsFromBooking } from '../services/invoiceService';
 import { createSchedulesFromInvoice } from '../services/scheduleService';
@@ -135,31 +139,22 @@ export async function createPayment(req: AuthRequest, res: Response) {
         }
 
         const creditAccount = await resolvePaymentCreditAccount(invoiceId, tx);
-        const entry = await createJournalEntry(
+        const entry = await createVerifiedPaymentJournalEntry(
           `Payment received: ${pmt.paymentNumber}`,
-          [
-            {
-              accountId,
-              debit: paymentAmount,
-              description: 'Payment received',
-              currency: payCurrency,
-              exchangeRate: rate,
-              amountPkr,
-              amountSar,
-              paymentMethod: method || 'CASH',
-              attachmentPath,
-            },
-            {
-              accountId: creditAccount.id,
-              credit: paymentAmount,
-              description: 'Reduce receivable',
-              currency: payCurrency,
-              exchangeRate: rate,
-              amountPkr,
-              amountSar,
-            },
-          ],
-          { reference: pmt.paymentNumber, receiptPath: attachmentPath },
+          {
+            receivingAccountId: accountId,
+            receivableAccountId: creditAccount.id,
+            amount: paymentAmount,
+            payCurrency,
+            rate,
+            amountPkr,
+            amountSar,
+            invoiceId: invoiceId || null,
+            method: method || 'CASH',
+            attachmentPath,
+            reference: pmt.paymentNumber,
+            receiptPath: attachmentPath,
+          },
           tx
         );
         journalEntryId = entry.id;
@@ -226,30 +221,20 @@ export async function verifyPayment(req: AuthRequest, res: Response) {
       }
 
       const creditAccount = await resolvePaymentCreditAccount(payment.invoiceId || undefined, tx);
-      const entry = await createJournalEntry(
+      const entry = await createVerifiedPaymentJournalEntry(
         `Payment verified: ${payment.paymentNumber}`,
-        [
-          {
-            accountId: payment.accountId,
-            debit: paymentAmount,
-            description: 'Payment received',
-            currency: payCurrency,
-            exchangeRate: rate,
-            amountPkr,
-            amountSar,
-            paymentMethod: payment.method,
-          },
-          {
-            accountId: creditAccount.id,
-            credit: paymentAmount,
-            description: 'Reduce receivable',
-            currency: payCurrency,
-            exchangeRate: rate,
-            amountPkr,
-            amountSar,
-          },
-        ],
-        { reference: payment.paymentNumber },
+        {
+          receivingAccountId: payment.accountId,
+          receivableAccountId: creditAccount.id,
+          amount: paymentAmount,
+          payCurrency,
+          rate,
+          amountPkr,
+          amountSar,
+          invoiceId: payment.invoiceId,
+          method: payment.method,
+          reference: payment.paymentNumber,
+        },
         tx
       );
 
