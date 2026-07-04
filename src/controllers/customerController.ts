@@ -122,8 +122,7 @@ export async function createCustomer(req: AuthRequest, res: Response) {
     });
   }, TX_OPTS);
 
-  const displayName = type === 'B2B' ? companyName : `${firstName} ${lastName}`;
-  await createCustomerAccount(customer.id, displayName);
+  await createCustomerAccount(customer.id, customer);
   await logActivity(req, 'CREATE', 'Customer', customer.id);
 
   return res.status(201).json({ success: true, data: customer });

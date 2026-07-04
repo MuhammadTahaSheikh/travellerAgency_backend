@@ -51,7 +51,7 @@ async function resolveEntityAccount(type: InternalEntityType, entityId: string):
   if (customer.customerType !== 'B2B') throw new Error('Only B2B clients can be used for internal transfers');
   const displayName = customer.companyName || `${customer.firstName} ${customer.lastName}`.trim();
   let account = customer.account;
-  if (!account) account = await createCustomerAccount(customer.id, displayName);
+  if (!account) account = await createCustomerAccount(customer.id, customer);
   return { account, name: displayName };
 }
 

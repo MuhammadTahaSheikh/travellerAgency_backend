@@ -1,6 +1,7 @@
 import prisma, { TX_OPTS } from '../config/database';
 import { AccountType, Prisma } from '@prisma/client';
 import { generateNumber } from '../utils/helpers';
+import { formatCustomerLedgerLabel, formatCustomerName } from '../utils/customerDisplay';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -108,18 +109,36 @@ export async function getOrCreateBankAccount() {
   return account;
 }
 
-export async function createCustomerAccount(customerId: string, customerName: string, tx?: TxClient) {
+export async function createCustomerAccount(
+  customerId: string,
+  customer: Parameters<typeof formatCustomerLedgerLabel>[0],
+  tx?: TxClient,
+  bookingNumber?: string | null,
+) {
   const client = tx || prisma;
   const existing = await client.account.findFirst({ where: { customerId } });
   if (existing) return existing;
 
   return client.account.create({
     data: {
-      name: `Customer: ${customerName}`,
+      name: formatCustomerLedgerLabel(customer, bookingNumber),
       code: generateNumber('CUST'),
       type: 'CUSTOMER',
       customerId,
     },
+  });
+}
+
+export async function updateCustomerAccountLabel(
+  accountId: string,
+  customer: Parameters<typeof formatCustomerLedgerLabel>[0],
+  bookingNumber?: string | null,
+  tx?: TxClient,
+) {
+  const client = tx || prisma;
+  return client.account.update({
+    where: { id: accountId },
+    data: { name: formatCustomerLedgerLabel(customer, bookingNumber) },
   });
 }
 

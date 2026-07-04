@@ -13,6 +13,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:clear-business-data": "tsx scripts/clear-business-data.ts",
     "db:migrate-revenue-deferred": "tsx scripts/migrate-revenue-to-deferred.ts",
+    "db:sync-customer-labels": "tsx scripts/sync-customer-account-labels.ts",
     "db:create-super-admin": "tsx scripts/create-super-admin.ts",
     "db:studio": "prisma studio",
     "db:reconcile": "node scripts/reconcile-account-balances.js"

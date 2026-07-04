@@ -9,6 +9,7 @@ import {
   createJournalEntry,
   createCustomerAccount,
   getOrCreateDeferredRevenueAccount,
+  updateCustomerAccountLabel,
 } from './ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from './currencyService';
 import { logoHtml, BRAND_NAME, BRAND_TAGLINE } from './documentBrand';
@@ -146,7 +147,10 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
   const run = async (client: TxClient) => {
     const invoice = await client.invoice.findUnique({
       where: { id: invoiceId },
-      include: { customer: { include: { account: true } } },
+      include: {
+        customer: { include: { account: true } },
+        booking: { select: { bookingNumber: true } },
+      },
     });
 
     if (!invoice) throw new Error('Invoice not found');
@@ -159,16 +163,24 @@ export async function confirmInvoice(invoiceId: string, tx?: TxClient) {
     if (invoice.status === 'CANCELLED') throw new Error('Cannot confirm cancelled invoice');
 
     let customerAccount = invoice.customer?.account;
-    if (!customerAccount) {
-      const customerLabel = invoice.customer?.customerType === 'B2B' && invoice.customer.companyName
-        ? invoice.customer.companyName
-        : `${invoice.customer?.firstName} ${invoice.customer?.lastName}`;
+    const bookingNumber = invoice.booking?.bookingNumber;
+    if (!customerAccount && invoice.customer) {
       customerAccount = await createCustomerAccount(
         invoice.customerId,
-        customerLabel,
+        invoice.customer,
+        client,
+        bookingNumber,
+      );
+    } else if (customerAccount && invoice.customer && bookingNumber) {
+      customerAccount = await updateCustomerAccountLabel(
+        customerAccount.id,
+        invoice.customer,
+        bookingNumber,
         client,
       );
     }
+
+    if (!customerAccount) throw new Error('Customer ledger account could not be created');
 
     const deferredAccount = await getOrCreateDeferredRevenueAccount(client);
     const amount = Number(invoice.totalAmount);
