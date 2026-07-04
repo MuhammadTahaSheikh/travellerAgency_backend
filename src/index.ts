@@ -26,6 +26,7 @@ import voucherRoutes from './routes/voucherRoutes';
 import checkInRoutes from './routes/checkInRoutes';
 import vendorPostingRoutes from './routes/vendorPostingRoutes';
 import approvalRoutes from './routes/approvalRoutes';
+import postingRequestRoutes from './routes/postingRequestRoutes';
 import uploadRoutes from './routes/uploadRoutes';
 import currencyRoutes from './routes/currencyRoutes';
 import { startScheduler } from './services/schedulerService';
@@ -59,7 +60,7 @@ app.use(
       return callback(new Error(`CORS blocked origin: ${origin}`));
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
@@ -97,6 +98,7 @@ app.use('/api/vouchers', voucherRoutes);
 app.use('/api/check-ins', checkInRoutes);
 app.use('/api/vendor-postings', vendorPostingRoutes);
 app.use('/api/approvals', approvalRoutes);
+app.use('/api/posting-requests', postingRequestRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/currency', currencyRoutes);
 

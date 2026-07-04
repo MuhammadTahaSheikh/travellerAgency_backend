@@ -70,7 +70,14 @@ enum NotificationType {
   DUE_ALERT
   CHECK_IN_REMINDER
   SYSTEM_ANNOUNCEMENT
+  POSTING_REQUEST
   EMAIL
+}
+
+enum PostingRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum ServiceType {
@@ -207,9 +214,11 @@ model User {
   inviteToken       String?   @unique
   inviteExpiresAt   DateTime?
   passwordSetAt     DateTime?
-  approvedInvoices  Invoice[] @relation("InvoiceApprovedBy")
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  approvedInvoices       Invoice[]        @relation("InvoiceApprovedBy")
+  postingRequestsCreated PostingRequest[] @relation("PostingRequestRequestedBy")
+  postingRequestsReviewed PostingRequest[] @relation("PostingRequestReviewedBy")
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
 }
 
 model Customer {
@@ -328,6 +337,7 @@ model Booking {
   checkIns         CheckInRecord[]
   vendorCosts      VendorCostAllocation[]
   vendorPostings   VendorPosting[]
+  postingRequests  PostingRequest[]
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
 }
@@ -563,8 +573,25 @@ model VendorPosting {
   reminderSent   Boolean             @default(false)
   journalEntryId String?
   postedAt       DateTime?
+  postingRequests PostingRequest[]
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
+}
+
+model PostingRequest {
+  id              String               @id @default(uuid())
+  bookingId       String
+  booking         Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  vendorPostingId String
+  vendorPosting   VendorPosting        @relation(fields: [vendorPostingId], references: [id], onDelete: Cascade)
+  requestedById   String
+  requestedBy     User                 @relation("PostingRequestRequestedBy", fields: [requestedById], references: [id])
+  status          PostingRequestStatus @default(PENDING)
+  reviewedById    String?
+  reviewedBy      User?                @relation("PostingRequestReviewedBy", fields: [reviewedById], references: [id])
+  rejectionReason String?
+  createdAt       DateTime             @default(now())
+  reviewedAt      DateTime?
 }
 
 model VendorCostAllocation {
