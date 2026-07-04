@@ -40,6 +40,13 @@ export async function createPostingRequest(req: AuthRequest, res: Response) {
     return res.status(400).json({ success: false, error: 'This vendor posting is already posted' });
   }
 
+  if (posting.status === 'UNASSIGNED') {
+    return res.status(400).json({
+      success: false,
+      error: 'Assign a vendor on the Vendor Postings page before requesting posting',
+    });
+  }
+
   if (!posting.vendorId) {
     return res.status(400).json({ success: false, error: 'Assign a vendor before requesting posting' });
   }

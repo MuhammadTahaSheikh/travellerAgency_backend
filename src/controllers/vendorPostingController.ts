@@ -7,7 +7,7 @@ import { createVendorPosting, postVendorCostToLedger, getPendingVendorCosts } fr
 
 export async function getVendorPostings(req: AuthRequest, res: Response) {
   const status = req.query.status as string;
-  const where = status ? { status: status as 'PENDING' | 'POSTED' | 'CANCELLED' } : {};
+  const where = status ? { status: status as 'UNASSIGNED' | 'PENDING' | 'POSTED' | 'CANCELLED' } : {};
 
   const postings = await prisma.vendorPosting.findMany({
     where,
@@ -68,13 +68,15 @@ export async function updateVendorPosting(req: AuthRequest, res: Response) {
   }
 
   const { vendorId, expectedCost, dueDate, description } = req.body;
+  const resolvedVendorId = vendorId ?? posting.vendorId;
   const updated = await prisma.vendorPosting.update({
     where: { id: posting.id },
     data: {
-      vendorId: vendorId ?? posting.vendorId,
+      vendorId: resolvedVendorId,
       expectedCost: expectedCost != null ? Number(expectedCost) : posting.expectedCost,
       dueDate: dueDate ? new Date(dueDate) : posting.dueDate,
       description: description ?? posting.description,
+      ...(posting.status === 'UNASSIGNED' && resolvedVendorId ? { status: 'PENDING' } : {}),
     },
     include: { vendor: true, invoice: true },
   });

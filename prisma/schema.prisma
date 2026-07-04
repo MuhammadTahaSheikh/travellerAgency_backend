@@ -124,6 +124,7 @@ enum VendorPostingType {
 }
 
 enum VendorPostingStatus {
+  UNASSIGNED
   PENDING
   POSTED
   CANCELLED

@@ -116,6 +116,13 @@ export async function createVendorPosting(
 ) {
   const client = tx || prisma;
 
+  const status =
+    data.postingType === 'INSTANT' && data.vendorId
+      ? 'POSTED'
+      : data.vendorId
+        ? 'PENDING'
+        : 'UNASSIGNED';
+
   const posting = await client.vendorPosting.create({
     data: {
       invoiceId: data.invoiceId,
@@ -128,14 +135,14 @@ export async function createVendorPosting(
       currency: data.currency || 'PKR',
       exchangeRate: data.exchangeRate,
       postingType: data.postingType,
-      status: data.postingType === 'INSTANT' ? 'POSTED' : 'PENDING',
+      status,
       dueDate: data.dueDate,
-      postedAt: data.postingType === 'INSTANT' ? new Date() : undefined,
+      postedAt: status === 'POSTED' ? new Date() : undefined,
     },
     include: { vendor: true, invoiceItem: true },
   });
 
-  if (data.postingType === 'INSTANT' && data.vendorId) {
+  if (status === 'POSTED') {
     await postVendorCostToLedger(posting.id, data.expectedCost, client);
   } else if (Number(data.expectedCost) > 0) {
     await accrueUnpostedCostToLedger(posting.id, client);
@@ -158,6 +165,9 @@ export async function postVendorCostToLedger(
       include: { vendor: true },
     });
     if (!posting) throw new Error('Vendor posting not found');
+    if (posting.status === 'UNASSIGNED') {
+      throw new Error('Assign a vendor on the Vendor Postings page before posting to ledger');
+    }
     if (posting.status === 'POSTED' && posting.journalEntryId) return posting;
 
     const cost = actualCost ?? Number(posting.actualCost ?? posting.expectedCost);
@@ -338,8 +348,14 @@ export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx
 
     const specs = buildPostingSpecsFromServiceItems(booking.serviceItems as ServiceItemRow[]);
     const pending = await client.vendorPosting.findMany({
-      where: { bookingId, status: 'PENDING' },
+      where: { bookingId, status: { in: ['PENDING', 'UNASSIGNED'] } },
       orderBy: { createdAt: 'asc' },
+    });
+
+    // Legacy rows: pending without vendor belong in UNASSIGNED queue
+    await client.vendorPosting.updateMany({
+      where: { bookingId, status: 'PENDING', vendorId: null },
+      data: { status: 'UNASSIGNED' },
     });
 
     if (specs.length === 0 && pending.length === 0) return [];
@@ -363,7 +379,6 @@ export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx
         const result = await client.vendorPosting.update({
           where: { id: posting.id },
           data: {
-            vendorId: spec.vendorId ?? null,
             expectedCost: spec.expectedCost,
             currency: spec.currency,
             exchangeRate: spec.exchangeRate,
@@ -377,7 +392,6 @@ export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx
       const created = await createVendorPosting(
         {
           bookingId,
-          vendorId: spec.vendorId,
           serviceType: spec.serviceType,
           description: spec.description,
           expectedCost: spec.expectedCost,
@@ -420,7 +434,6 @@ export async function createVendorPostingsFromBooking(bookingId: string, tx?: Tx
       const posting = await createVendorPosting(
         {
           bookingId,
-          vendorId: spec.vendorId,
           serviceType: spec.serviceType,
           description: spec.description,
           expectedCost: spec.expectedCost,
@@ -440,8 +453,17 @@ export async function createVendorPostingsFromBooking(bookingId: string, tx?: Tx
   return prisma.$transaction(run, TX_OPTS);
 }
 
+async function migrateUnassignedPostings() {
+  const result = await prisma.vendorPosting.updateMany({
+    where: { status: 'PENDING', vendorId: null },
+    data: { status: 'UNASSIGNED' },
+  });
+  return result.count;
+}
+
 /** Backfill unposted ledger entries for pending postings created before this feature. */
 export async function backfillUnpostedLedgerEntries() {
+  await migrateUnassignedPostings();
   const pending = await prisma.vendorPosting.findMany({
     where: {
       status: 'PENDING',
@@ -473,7 +495,7 @@ export async function getUnpostedCostsLedgerSummary() {
 
 export async function getPendingVendorCosts() {
   const postings = await prisma.vendorPosting.findMany({
-    where: { status: 'PENDING' },
+    where: { status: { in: ['PENDING', 'UNASSIGNED'] } },
     include: {
       vendor: true,
       invoice: { include: { customer: true } },
