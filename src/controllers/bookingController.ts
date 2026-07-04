@@ -5,7 +5,7 @@ import { paginate, formatPagination, applyDateFilter, serializeForDeletedRecord,
 import { allocateBookingNumber } from '../services/numberingService';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
-import { createBookingConfirmation } from '../services/notificationService';
+import { createBookingConfirmation, createNotification } from '../services/notificationService';
 import {
   generateInvoiceFromBooking,
   createCheckInsFromBooking,
@@ -49,8 +49,55 @@ function isSuperAdmin(role?: string) {
 function canUserModifyBooking(role: string | undefined, bookingStatus: string): boolean {
   if (isSuperAdmin(role)) return true;
   if (role === 'ADMIN') return true;
-  if (bookingStatus === 'CONFIRMED') return false;
+  if (bookingStatus === 'CONFIRMED' || bookingStatus === 'REQUEST_CONFIRMATION') return false;
   return true;
+}
+
+function canDirectConfirmBooking(role?: string) {
+  return isSuperAdmin(role);
+}
+
+function normalizeBookingStatus(status?: string): string {
+  const allowed = ['DRAFT', 'PENDING', 'REQUEST_CONFIRMATION', 'CONFIRMED', 'CANCELLED', 'COMPLETED'];
+  if (status && allowed.includes(status)) return status;
+  return 'DRAFT';
+}
+
+async function handleBookingDraft(bookingId: string) {
+  return generateInvoiceFromBooking(bookingId);
+}
+
+async function submitConfirmationRequest(bookingId: string, userId: string, userName: string) {
+  const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+  if (!booking) throw new Error('Booking not found');
+
+  const existing = await prisma.bookingConfirmationRequest.findFirst({
+    where: { bookingId, status: 'PENDING' },
+  });
+  if (existing) return existing;
+
+  const request = await prisma.bookingConfirmationRequest.create({
+    data: { bookingId, requestedById: userId },
+  });
+
+  const superAdmins = await prisma.user.findMany({
+    where: { isActive: true, role: { name: 'SUPER_ADMIN' } },
+    select: { id: true },
+  });
+
+  await Promise.all(
+    superAdmins.map((admin) =>
+      createNotification(
+        admin.id,
+        'BOOKING_CONFIRMATION_REQUEST',
+        'Booking Confirmation Request',
+        `${userName} requested confirmation for booking ${booking.bookingNumber}`,
+        '/approvals?tab=booking'
+      )
+    )
+  );
+
+  return request;
 }
 
 export async function getBookings(req: AuthRequest, res: Response) {
@@ -200,6 +247,15 @@ export async function createBooking(req: AuthRequest, res: Response) {
     return res.status(400).json({ success: false, error: 'Total amount must be greater than zero' });
   }
 
+  const bookingStatus = normalizeBookingStatus(status);
+
+  if (bookingStatus === 'CONFIRMED' && !canDirectConfirmBooking(req.user?.role)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Only Super Admin can confirm bookings directly. Use Request Confirmation instead.',
+    });
+  }
+
   const bookingNumber = await allocateBookingNumber();
   const booking = await prisma.booking.create({
     data: {
@@ -223,7 +279,7 @@ export async function createBooking(req: AuthRequest, res: Response) {
       totalAmount: computedTotal,
       discount: discount || 0,
       notes,
-      status: status || 'PENDING',
+      status: bookingStatus as 'DRAFT' | 'PENDING' | 'REQUEST_CONFIRMATION' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED',
       bookingCustomers: additionalCustomers?.length
         ? { create: additionalCustomers.map((cid: string) => ({ customerId: cid })) }
         : undefined,
@@ -258,14 +314,24 @@ export async function createBooking(req: AuthRequest, res: Response) {
   await logActivity(req, 'CREATE', 'Booking', booking.id);
 
   let invoice = null;
-  if (booking.status === 'CONFIRMED') {
-    try {
+  try {
+    if (booking.status === 'DRAFT' || booking.status === 'PENDING') {
+      invoice = await handleBookingDraft(booking.id);
+    } else if (booking.status === 'REQUEST_CONFIRMATION') {
+      invoice = await handleBookingDraft(booking.id);
+      await submitConfirmationRequest(
+        booking.id,
+        req.user!.id,
+        `${req.user!.firstName} ${req.user!.lastName}`
+      );
+    } else if (booking.status === 'CONFIRMED') {
       invoice = await handleBookingConfirmed(booking.id, req.user!.id);
-    } catch (err) {
-      await prisma.booking.update({ where: { id: booking.id }, data: { status: 'PENDING' } });
-      const message = err instanceof Error ? err.message : 'Failed to confirm booking';
-      return res.status(500).json({ success: false, error: `Booking saved as pending: ${message}` });
     }
+  } catch (err) {
+    const fallbackStatus = booking.status === 'CONFIRMED' ? 'DRAFT' : booking.status;
+    await prisma.booking.update({ where: { id: booking.id }, data: { status: fallbackStatus } });
+    const message = err instanceof Error ? err.message : 'Failed to process booking status';
+    return res.status(500).json({ success: false, error: message });
   }
 
   return res.status(201).json({ success: true, data: booking, invoice });
@@ -306,11 +372,19 @@ export async function updateBooking(req: AuthRequest, res: Response) {
   if (!canUserModifyBooking(req.user?.role, oldBooking.status)) {
     return res.status(403).json({
       success: false,
-      error: 'Confirmed bookings cannot be modified. Contact Super Admin.',
+      error: 'This booking cannot be modified. Contact Super Admin.',
     });
   }
 
-  const { serviceItems, ...rest } = req.body;
+  const { serviceItems, status: rawStatus, ...rest } = req.body;
+  const nextStatus = rawStatus ? normalizeBookingStatus(rawStatus) : oldBooking.status;
+
+  if (nextStatus === 'CONFIRMED' && !canDirectConfirmBooking(req.user?.role)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Only Super Admin can confirm bookings directly. Use Request Confirmation instead.',
+    });
+  }
 
   const booking = await prisma.$transaction(async (tx) => {
     if (serviceItems) {
@@ -321,6 +395,7 @@ export async function updateBooking(req: AuthRequest, res: Response) {
       where: { id: paramId(req) },
       data: {
         ...rest,
+        status: nextStatus,
         packageId: rest.packageId || null,
         travelDate: rest.travelDate ? new Date(rest.travelDate) : undefined,
         returnDate: rest.returnDate ? new Date(rest.returnDate) : undefined,
@@ -355,22 +430,34 @@ export async function updateBooking(req: AuthRequest, res: Response) {
   await logActivity(req, 'UPDATE', 'Booking', booking.id, `Status: ${oldBooking?.status} -> ${booking.status}`);
 
   let invoice = null;
-  if (oldBooking?.status !== 'CONFIRMED' && booking.status === 'CONFIRMED') {
-    try {
+  try {
+    if (oldBooking?.status !== 'CONFIRMED' && booking.status === 'CONFIRMED') {
       invoice = await handleBookingConfirmed(booking.id, req.user!.id);
-    } catch (err) {
-      await prisma.booking.update({ where: { id: booking.id }, data: { status: oldBooking?.status || 'PENDING' } });
-      const message = err instanceof Error ? err.message : 'Failed to confirm booking';
-      return res.status(500).json({ success: false, error: `Booking confirmation failed: ${message}` });
-    }
-  } else if (booking.status === 'CONFIRMED') {
-    // Re-save of an already-confirmed booking — re-sync invoice/ledger and travel schedule.
-    try {
+    } else if (booking.status === 'CONFIRMED') {
       invoice = await resyncConfirmedBooking(booking.id);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to sync booking';
-      return res.status(500).json({ success: false, error: `Booking saved but sync failed: ${message}` });
+    } else if (
+      booking.status === 'DRAFT' ||
+      booking.status === 'PENDING' ||
+      (oldBooking?.status !== booking.status && booking.status !== 'REQUEST_CONFIRMATION' && booking.status !== 'CANCELLED')
+    ) {
+      invoice = await handleBookingDraft(booking.id);
     }
+
+    if (
+      booking.status === 'REQUEST_CONFIRMATION' &&
+      oldBooking?.status !== 'REQUEST_CONFIRMATION'
+    ) {
+      if (!invoice) invoice = await handleBookingDraft(booking.id);
+      await submitConfirmationRequest(
+        booking.id,
+        req.user!.id,
+        `${req.user!.firstName} ${req.user!.lastName}`
+      );
+    }
+  } catch (err) {
+    await prisma.booking.update({ where: { id: booking.id }, data: { status: oldBooking?.status || 'DRAFT' } });
+    const message = err instanceof Error ? err.message : 'Failed to update booking';
+    return res.status(500).json({ success: false, error: message });
   }
 
   return res.json({ success: true, data: booking, invoice });

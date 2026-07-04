@@ -22,10 +22,18 @@ enum AccountType {
 }
 
 enum BookingStatus {
+  DRAFT
   PENDING
+  REQUEST_CONFIRMATION
   CONFIRMED
   CANCELLED
   COMPLETED
+}
+
+enum BookingConfirmationRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum InvoiceStatus {
@@ -66,6 +74,7 @@ enum IncomeCategory {
 
 enum NotificationType {
   BOOKING_CONFIRMATION
+  BOOKING_CONFIRMATION_REQUEST
   PAYMENT_REMINDER
   DUE_ALERT
   CHECK_IN_REMINDER
@@ -217,6 +226,8 @@ model User {
   approvedInvoices       Invoice[]        @relation("InvoiceApprovedBy")
   postingRequestsCreated PostingRequest[] @relation("PostingRequestRequestedBy")
   postingRequestsReviewed PostingRequest[] @relation("PostingRequestReviewedBy")
+  bookingConfirmationRequestsCreated BookingConfirmationRequest[] @relation("BookingConfirmationRequestedBy")
+  bookingConfirmationRequestsReviewed BookingConfirmationRequest[] @relation("BookingConfirmationReviewedBy")
   createdAt              DateTime         @default(now())
   updatedAt              DateTime         @updatedAt
 }
@@ -312,7 +323,7 @@ model Booking {
   customer         Customer               @relation(fields: [customerId], references: [id])
   createdById      String
   createdBy        User                   @relation("BookingCreatedBy", fields: [createdById], references: [id])
-  status           BookingStatus          @default(PENDING)
+  status           BookingStatus          @default(DRAFT)
   bookingType      CustomerType           @default(B2C)
   guestName        String?
   currency         CurrencyCode           @default(PKR)
@@ -337,9 +348,24 @@ model Booking {
   checkIns         CheckInRecord[]
   vendorCosts      VendorCostAllocation[]
   vendorPostings   VendorPosting[]
-  postingRequests  PostingRequest[]
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  postingRequests           PostingRequest[]
+  confirmationRequests      BookingConfirmationRequest[]
+  createdAt                 DateTime                     @default(now())
+  updatedAt                 DateTime                     @updatedAt
+}
+
+model BookingConfirmationRequest {
+  id              String                           @id @default(uuid())
+  bookingId       String
+  booking         Booking                          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  requestedById   String
+  requestedBy     User                             @relation("BookingConfirmationRequestedBy", fields: [requestedById], references: [id])
+  status          BookingConfirmationRequestStatus @default(PENDING)
+  reviewedById    String?
+  reviewedBy      User?                            @relation("BookingConfirmationReviewedBy", fields: [reviewedById], references: [id])
+  rejectionReason String?
+  createdAt       DateTime                         @default(now())
+  reviewedAt      DateTime?
 }
 
 model BookingServiceItem {
