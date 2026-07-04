@@ -501,6 +501,33 @@ export async function updateBookingPricing(req: AuthRequest, res: Response) {
           totalAmount,
         },
       });
+
+      if (serviceItems?.length) {
+        const existing = await tx.bookingServiceItem.findMany({
+          where: { bookingId: booking.id },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        for (let i = 0; i < serviceItems.length; i++) {
+          const incoming = serviceItems[i] as {
+            id?: string;
+            costAmount?: number;
+            details?: Record<string, unknown>;
+          };
+          const match = incoming.id
+            ? existing.find((e) => e.id === incoming.id)
+            : existing[i];
+          if (!match) continue;
+
+          await tx.bookingServiceItem.update({
+            where: { id: match.id },
+            data: {
+              costAmount: incoming.costAmount != null ? Number(incoming.costAmount) : match.costAmount,
+              details: incoming.details ? JSON.parse(JSON.stringify(incoming.details)) : match.details,
+            },
+          });
+        }
+      }
     } else if (serviceItems?.length) {
       await tx.bookingServiceItem.deleteMany({ where: { bookingId: booking.id } });
 
