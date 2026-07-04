@@ -2,6 +2,7 @@ import prisma, { TX_OPTS } from '../config/database';
 import { Prisma, ServiceType } from '@prisma/client';
 import { createJournalEntry } from './ledgerService';
 import { createVendorAccount } from './vendorService';
+import { formatVendorDisplay } from '../utils/vendorDisplay';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -181,10 +182,12 @@ export async function postVendorCostToLedger(
     const payCurrency = (posting.currency || 'PKR') as 'PKR' | 'SAR';
     const { rate, amountPkr, amountSar } = await postingAmounts(cost, payCurrency, posting.exchangeRate != null ? Number(posting.exchangeRate) : undefined);
 
+    const vendorLabel = formatVendorDisplay(posting.vendor, posting.vendor.name);
+
     const vendorLine = {
       accountId: vendorAccount.id,
       credit: cost,
-      description: `Payable to ${posting.vendor.name}`,
+      description: `Payable to ${vendorLabel}`,
       currency: payCurrency,
       exchangeRate: rate,
       amountPkr,
@@ -200,7 +203,7 @@ export async function postVendorCostToLedger(
           {
             accountId: unpostedAccount.id,
             debit: cost,
-            description: `Transfer to ${posting.vendor.name}`,
+            description: `Transfer to ${vendorLabel}`,
             currency: payCurrency,
             exchangeRate: rate,
             amountPkr,

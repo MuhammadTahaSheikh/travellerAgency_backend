@@ -209,7 +209,7 @@ export async function getLedgerTransactions(filters?: {
       account: {
         include: {
           customer: { select: { id: true, firstName: true, lastName: true, companyName: true, tradePartnerId: true, customerType: true } },
-          vendor: { select: { id: true, name: true, category: true } },
+          vendor: { select: { id: true, name: true, vendorCode: true, category: true } },
         },
       },
       journalEntry: {

@@ -12,6 +12,7 @@ import {
 import { logActivity } from '../middleware/activityLogger';
 import { sendLedgerExport } from '../utils/ledgerExport';
 import { createInternalTransfer, executeLedgerTransfer } from '../services/internalTransferService';
+import { formatVendorDisplay } from '../utils/vendorDisplay';
 
 export async function getAccounts(req: AuthRequest, res: Response) {
   const search = (req.query.search as string)?.trim();
@@ -29,7 +30,7 @@ export async function getAccounts(req: AuthRequest, res: Response) {
     },
     include: {
       customer: { select: { id: true, firstName: true, lastName: true, phone: true, companyName: true, tradePartnerId: true, customerType: true } },
-      vendor: { select: { id: true, name: true, category: true } },
+      vendor: { select: { id: true, name: true, vendorCode: true, category: true } },
       employee: { select: { id: true, firstName: true, lastName: true } },
     },
     orderBy: { name: 'asc' },
@@ -168,6 +169,7 @@ export async function getTrialBalanceReport(req: AuthRequest, res: Response) {
       customerId: true,
       vendorId: true,
       employeeId: true,
+      vendor: { select: { name: true, vendorCode: true } },
     },
     orderBy: { name: 'asc' },
   });
@@ -178,7 +180,7 @@ export async function getTrialBalanceReport(req: AuthRequest, res: Response) {
       : Number(acc.balancePkr ?? acc.balance);
     return {
       accountId: acc.id,
-      accountName: acc.name,
+      accountName: acc.vendor ? formatVendorDisplay(acc.vendor) : acc.name,
       accountCode: acc.code,
       accountType: acc.type,
       customerId: acc.customerId,
