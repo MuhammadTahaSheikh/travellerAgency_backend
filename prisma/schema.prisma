@@ -16,6 +16,7 @@ enum RoleName {
 enum AccountType {
   CASH
   BANK
+  REVENUE
   CUSTOMER
   SUPPLIER
   EMPLOYEE

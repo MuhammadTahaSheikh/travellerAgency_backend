@@ -145,7 +145,7 @@ async function getOrCreateIncomeAccount() {
   let account = await prisma.account.findFirst({ where: { code: 'INCOME-001' } });
   if (!account) {
     account = await prisma.account.create({
-      data: { name: 'Income Account', code: 'INCOME-001', type: 'CASH' },
+      data: { name: 'Income Account', code: 'INCOME-001', type: 'REVENUE' },
     });
   }
   return account;

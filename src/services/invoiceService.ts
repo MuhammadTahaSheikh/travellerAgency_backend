@@ -28,7 +28,7 @@ async function getOrCreateIncomeAccount(tx?: TxClient) {
   let account = await client.account.findFirst({ where: { code: 'INCOME-001' } });
   if (!account) {
     account = await client.account.create({
-      data: { name: 'Revenue Account', code: 'INCOME-001', type: 'CASH' },
+      data: { name: 'Revenue Account', code: 'INCOME-001', type: 'REVENUE' },
     });
   }
   return account;

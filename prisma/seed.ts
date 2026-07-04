@@ -155,7 +155,7 @@ async function main() {
   const accounts = [
     { name: 'Cash Account', code: 'CASH-001', type: 'CASH' as const },
     { name: 'Bank Account', code: 'BANK-001', type: 'BANK' as const },
-    { name: 'Income Account', code: 'INCOME-001', type: 'CASH' as const },
+    { name: 'Income Account', code: 'INCOME-001', type: 'REVENUE' as const },
   ];
 
   for (const acc of accounts) {
