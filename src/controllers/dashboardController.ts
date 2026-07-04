@@ -2,7 +2,7 @@ import { Response } from 'express';
 import prisma from '../config/database';
 import { AuthRequest } from '../types';
 import { paginate, formatPagination } from '../utils/helpers';
-import { getPendingVendorCosts } from '../services/vendorPostingService';
+import { getPendingVendorCosts, getOrCreateCostOfSalesAccount, getUnpostedCostsLedgerSummary } from '../services/vendorPostingService';
 
 export async function getDashboardStats(req: AuthRequest, res: Response) {
   const [
@@ -51,8 +51,12 @@ export async function getDashboardStats(req: AuthRequest, res: Response) {
   const expenses = Number(totalExpenses._sum.amount || 0);
   const paidExpenses = Number(postedVendorCosts._sum.actualCost || postedVendorCosts._sum.expectedCost || 0);
   const pendingExpenses = pendingCosts.totalPending;
-  const estimatedProfit = revenue - paidExpenses - pendingExpenses;
-  const netProfit = revenue - expenses - paidExpenses;
+  const cosAccount = await getOrCreateCostOfSalesAccount();
+  const unpostedLedger = pendingCosts.unpostedLedger ?? (await getUnpostedCostsLedgerSummary());
+  const totalCostOfSales = Number(cosAccount.balancePkr ?? cosAccount.balance ?? 0);
+  const unpostedLedgerTotal = unpostedLedger.balancePkr;
+  const actualProfit = revenue - totalCostOfSales;
+  const estimatedProfit = actualProfit;
 
   return res.json({
     success: true,
@@ -72,8 +76,11 @@ export async function getDashboardStats(req: AuthRequest, res: Response) {
         paidExpenses,
         actualExpenses: paidExpenses,
         pendingExpenses,
+        totalCostOfSales,
+        unpostedLedgerTotal,
+        actualProfit,
         estimatedProfit,
-        netProfit,
+        netProfit: actualProfit,
         unreadNotifications,
       },
       recentBookings,

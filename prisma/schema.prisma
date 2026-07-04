@@ -597,6 +597,7 @@ model VendorPosting {
   status         VendorPostingStatus @default(PENDING)
   dueDate        DateTime?
   reminderSent   Boolean             @default(false)
+  unpostedJournalEntryId String?
   journalEntryId String?
   postedAt       DateTime?
   postingRequests PostingRequest[]

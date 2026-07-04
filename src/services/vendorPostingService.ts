@@ -5,14 +5,97 @@ import { createVendorAccount } from './vendorService';
 
 type TxClient = Prisma.TransactionClient;
 
-async function getOrCreateCostOfSalesAccount(tx: TxClient) {
-  let account = await tx.account.findFirst({ where: { code: 'COS-001' } });
+export const UNPOSTED_VENDOR_COSTS_CODE = 'UNPOSTED-001';
+export const COST_OF_SALES_CODE = 'COS-001';
+
+export async function getOrCreateCostOfSalesAccount(tx?: TxClient) {
+  const client = tx || prisma;
+  let account = await client.account.findFirst({ where: { code: COST_OF_SALES_CODE } });
   if (!account) {
-    account = await tx.account.create({
-      data: { name: 'Cost of Sales', code: 'COS-001', type: 'SUPPLIER' },
+    account = await client.account.create({
+      data: { name: 'Cost of Sales', code: COST_OF_SALES_CODE, type: 'SUPPLIER' },
     });
   }
   return account;
+}
+
+export async function getOrCreateUnpostedVendorCostsAccount(tx?: TxClient) {
+  const client = tx || prisma;
+  let account = await client.account.findFirst({ where: { code: UNPOSTED_VENDOR_COSTS_CODE } });
+  if (!account) {
+    account = await client.account.create({
+      data: {
+        name: 'Unposted Vendor Costs',
+        code: UNPOSTED_VENDOR_COSTS_CODE,
+        type: 'SUPPLIER',
+        description: 'Service costs accrued on booking confirm — transferred to vendor ledgers when posted',
+      },
+    });
+  }
+  return account;
+}
+
+async function postingAmounts(
+  cost: number,
+  currency: 'PKR' | 'SAR',
+  exchangeRate?: number | null
+) {
+  const rate = Number(exchangeRate || (await import('./currencyService').then((m) => m.getDefaultExchangeRate())));
+  const { amountPkr, amountSar } = (await import('./currencyService')).convertCurrency(cost, currency, rate);
+  return { rate, amountPkr, amountSar };
+}
+
+/** Recognize cost in COS and park payable in the unposted vendor costs ledger. */
+export async function accrueUnpostedCostToLedger(postingId: string, tx?: TxClient) {
+  const run = async (client: TxClient) => {
+    const posting = await client.vendorPosting.findUnique({ where: { id: postingId } });
+    if (!posting) throw new Error('Vendor posting not found');
+    if (posting.unpostedJournalEntryId) return posting;
+    if (posting.status === 'POSTED') return posting;
+
+    const cost = Number(posting.expectedCost);
+    if (cost <= 0) return posting;
+
+    const cosAccount = await getOrCreateCostOfSalesAccount(client);
+    const unpostedAccount = await getOrCreateUnpostedVendorCostsAccount(client);
+    const payCurrency = (posting.currency || 'PKR') as 'PKR' | 'SAR';
+    const { rate, amountPkr, amountSar } = await postingAmounts(cost, payCurrency, posting.exchangeRate != null ? Number(posting.exchangeRate) : undefined);
+
+    const entry = await createJournalEntry(
+      `Unposted vendor cost: ${posting.description}`,
+      [
+        {
+          accountId: cosAccount.id,
+          debit: cost,
+          description: `${posting.serviceType}: ${posting.description}`,
+          currency: payCurrency,
+          exchangeRate: rate,
+          amountPkr,
+          amountSar,
+        },
+        {
+          accountId: unpostedAccount.id,
+          credit: cost,
+          description: `Pending vendor posting — ${posting.serviceType}`,
+          currency: payCurrency,
+          exchangeRate: rate,
+          amountPkr,
+          amountSar,
+        },
+      ],
+      { reference: posting.id },
+      client
+    );
+
+    return client.vendorPosting.update({
+      where: { id: postingId },
+      data: { unpostedJournalEntryId: entry.id },
+      include: { vendor: true, invoice: true },
+    });
+  };
+
+  if (tx) return run(tx);
+  return prisma.$transaction(run, TX_OPTS);
 }
 
 export async function createVendorPosting(
@@ -54,9 +137,14 @@ export async function createVendorPosting(
 
   if (data.postingType === 'INSTANT' && data.vendorId) {
     await postVendorCostToLedger(posting.id, data.expectedCost, client);
+  } else if (Number(data.expectedCost) > 0) {
+    await accrueUnpostedCostToLedger(posting.id, client);
   }
 
-  return posting;
+  return client.vendorPosting.findUniqueOrThrow({
+    where: { id: posting.id },
+    include: { vendor: true, invoiceItem: true },
+  });
 }
 
 export async function postVendorCostToLedger(
@@ -80,35 +168,58 @@ export async function postVendorCostToLedger(
       vendorAccount = await createVendorAccount(posting.vendorId, posting.vendor.name, client);
     }
 
-    const payCurrency = posting.currency || 'PKR';
-    const rate = Number(posting.exchangeRate || (await import('./currencyService').then((m) => m.getDefaultExchangeRate())));
-    const { amountPkr, amountSar } = (await import('./currencyService')).convertCurrency(cost, payCurrency, rate);
+    const payCurrency = (posting.currency || 'PKR') as 'PKR' | 'SAR';
+    const { rate, amountPkr, amountSar } = await postingAmounts(cost, payCurrency, posting.exchangeRate != null ? Number(posting.exchangeRate) : undefined);
 
-    const entry = await createJournalEntry(
-      `Vendor cost: ${posting.description}`,
-      [
-        {
-          accountId: (await getOrCreateCostOfSalesAccount(client)).id,
-          debit: cost,
-          description: posting.description,
-          currency: payCurrency,
-          exchangeRate: rate,
-          amountPkr,
-          amountSar,
-        },
-        {
-          accountId: vendorAccount.id,
-          credit: cost,
-          description: `Payable to ${posting.vendor.name}`,
-          currency: payCurrency,
-          exchangeRate: rate,
-          amountPkr,
-          amountSar,
-        },
-      ],
-      { reference: posting.id },
-      client
-    );
+    const vendorLine = {
+      accountId: vendorAccount.id,
+      credit: cost,
+      description: `Payable to ${posting.vendor.name}`,
+      currency: payCurrency,
+      exchangeRate: rate,
+      amountPkr,
+      amountSar,
+    };
+
+    let entry;
+    if (posting.unpostedJournalEntryId) {
+      const unpostedAccount = await getOrCreateUnpostedVendorCostsAccount(client);
+      entry = await createJournalEntry(
+        `Vendor cost posted: ${posting.description}`,
+        [
+          {
+            accountId: unpostedAccount.id,
+            debit: cost,
+            description: `Transfer to ${posting.vendor.name}`,
+            currency: payCurrency,
+            exchangeRate: rate,
+            amountPkr,
+            amountSar,
+          },
+          vendorLine,
+        ],
+        { reference: posting.id },
+        client
+      );
+    } else {
+      entry = await createJournalEntry(
+        `Vendor cost: ${posting.description}`,
+        [
+          {
+            accountId: (await getOrCreateCostOfSalesAccount(client)).id,
+            debit: cost,
+            description: posting.description,
+            currency: payCurrency,
+            exchangeRate: rate,
+            amountPkr,
+            amountSar,
+          },
+          vendorLine,
+        ],
+        { reference: posting.id },
+        client
+      );
+    }
 
     const updated = await client.vendorPosting.update({
       where: { id: postingId },
@@ -121,8 +232,6 @@ export async function postVendorCostToLedger(
       include: { vendor: true, invoice: true },
     });
 
-    // Reflect the posting on the travel schedule so hotel/transport rows for this
-    // booking/invoice show as "Posted" once the vendor cost hits the ledger.
     if ((posting.serviceType === 'HOTEL' || posting.serviceType === 'TRANSPORT') && (posting.bookingId || posting.invoiceId)) {
       await client.checkInRecord.updateMany({
         where: {
@@ -142,9 +251,8 @@ export async function postVendorCostToLedger(
 
 /**
  * Creates vendor postings for a confirmed booking's service items. Postings default to
- * PENDING ("Unposted") — they only hit the ledger once explicitly confirmed on the vendor
- * postings screen. Row-based services (accommodation / transport) generate one posting per
- * sector/row so each vendor and currency is tracked independently.
+ * PENDING ("Unposted") — cost hits the unposted vendor costs ledger immediately; on post,
+ * entries move to the selected vendor's ledger account.
  */
 export async function createVendorPostingsFromBooking(bookingId: string, tx?: TxClient) {
   const run = async (client: TxClient) => {
@@ -218,13 +326,50 @@ export async function createVendorPostingsFromBooking(bookingId: string, tx?: Tx
   return prisma.$transaction(run, TX_OPTS);
 }
 
+/** Backfill unposted ledger entries for pending postings created before this feature. */
+export async function backfillUnpostedLedgerEntries() {
+  const pending = await prisma.vendorPosting.findMany({
+    where: {
+      status: 'PENDING',
+      unpostedJournalEntryId: null,
+      expectedCost: { gt: 0 },
+    },
+  });
+
+  let count = 0;
+  for (const posting of pending) {
+    await accrueUnpostedCostToLedger(posting.id);
+    count += 1;
+  }
+  return count;
+}
+
+export async function getUnpostedCostsLedgerSummary() {
+  const account = await getOrCreateUnpostedVendorCostsAccount();
+  const balancePkr = Number(account.balancePkr ?? account.balance);
+  const balanceSar = Number(account.balanceSar ?? 0);
+  return {
+    account,
+    balancePkr: Math.abs(balancePkr),
+    balanceSar: Math.abs(balanceSar),
+    /** Credit-normal liability — stored as negative balance in the account. */
+    rawBalancePkr: balancePkr,
+  };
+}
+
 export async function getPendingVendorCosts() {
   const postings = await prisma.vendorPosting.findMany({
     where: { status: 'PENDING' },
-    include: { vendor: true, invoice: { include: { customer: true } }, invoiceItem: true },
+    include: {
+      vendor: true,
+      invoice: { include: { customer: true } },
+      invoiceItem: true,
+      booking: { select: { bookingNumber: true, guestName: true } },
+    },
     orderBy: { dueDate: 'asc' },
   });
 
   const totalPending = postings.reduce((s, p) => s + Number(p.expectedCost), 0);
-  return { postings, totalPending };
+  const unpostedLedger = await getUnpostedCostsLedgerSummary();
+  return { postings, totalPending, unpostedLedger };
 }

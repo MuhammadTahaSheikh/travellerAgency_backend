@@ -40,9 +40,11 @@ export async function getAccounts(req: AuthRequest, res: Response) {
   const customers: AccountRow[] = [];
   const vendors: AccountRow[] = [];
   const employees: AccountRow[] = [];
+  const unposted: AccountRow[] = [];
 
   for (const acc of accounts) {
-    if (acc.customerId) customers.push(acc);
+    if (acc.code === 'UNPOSTED-001') unposted.push(acc);
+    else if (acc.customerId) customers.push(acc);
     else if (acc.vendorId) vendors.push(acc);
     else if (acc.employeeId) employees.push(acc);
     else company.push(acc);
@@ -59,6 +61,13 @@ export async function getAccounts(req: AuthRequest, res: Response) {
       customers: { label: 'Customers', accounts: customers, totalBalance: sumBalance(customers), totalBalancePkr: sumBalance(customers, 'balancePkr'), totalBalanceSar: sumBalance(customers, 'balanceSar') },
       vendors: { label: 'Vendors', accounts: vendors, totalBalance: sumBalance(vendors), totalBalancePkr: sumBalance(vendors, 'balancePkr'), totalBalanceSar: sumBalance(vendors, 'balanceSar') },
       employees: { label: 'Employees', accounts: employees, totalBalance: sumBalance(employees), totalBalancePkr: sumBalance(employees, 'balancePkr'), totalBalanceSar: sumBalance(employees, 'balanceSar') },
+      unposted: {
+        label: 'Unposted Vendor Costs',
+        accounts: unposted,
+        totalBalance: sumBalance(unposted),
+        totalBalancePkr: Math.abs(sumBalance(unposted, 'balancePkr')),
+        totalBalanceSar: Math.abs(sumBalance(unposted, 'balanceSar')),
+      },
     },
   });
 }
@@ -182,6 +191,7 @@ export async function getTrialBalanceReport(req: AuthRequest, res: Response) {
   });
 
   const groupKey = (r: (typeof rows)[number]) => {
+    if (r.accountCode === 'UNPOSTED-001') return 'unposted';
     if (r.customerId) return 'customers';
     if (r.vendorId) return 'vendors';
     if (r.employeeId) return 'employees';
@@ -193,6 +203,7 @@ export async function getTrialBalanceReport(req: AuthRequest, res: Response) {
     customers: [],
     vendors: [],
     employees: [],
+    unposted: [],
   };
   rows.forEach((r) => grouped[groupKey(r)].push(r));
 
@@ -208,6 +219,7 @@ export async function getTrialBalanceReport(req: AuthRequest, res: Response) {
         customers: { label: 'Customers', accounts: grouped.customers },
         vendors: { label: 'Vendors', accounts: grouped.vendors },
         employees: { label: 'Employees', accounts: grouped.employees },
+        unposted: { label: 'Unposted Vendor Costs', accounts: grouped.unposted },
       },
       totalDebit,
       totalCredit,

@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import prisma from '../config/database';
+import { getOrCreateCostOfSalesAccount, getUnpostedCostsLedgerSummary } from '../services/vendorPostingService';
 import { AuthRequest } from '../types';
 import { parseDateRange } from '../utils/helpers';
 
@@ -35,7 +36,7 @@ function sumRecord(values: Record<string, number>) {
 export async function getIncomeStatement(req: AuthRequest, res: Response) {
   const { start, end } = getReportPeriod(req.query.startDate as string, req.query.endDate as string);
 
-  const [incomeEntries, payments, expenses, costAllocations, postedVendorPostings] = await Promise.all([
+  const [incomeEntries, payments, expenses, costAllocations, postedVendorPostings, cosAccount, unpostedLedger] = await Promise.all([
     prisma.incomeEntry.findMany({ where: { entryDate: { gte: start, lte: end } } }),
     prisma.payment.findMany({ where: { paymentDate: { gte: start, lte: end } } }),
     prisma.expense.findMany({
@@ -49,7 +50,18 @@ export async function getIncomeStatement(req: AuthRequest, res: Response) {
     prisma.vendorPosting.findMany({
       where: { status: 'POSTED', postedAt: { gte: start, lte: end } },
     }),
+    getOrCreateCostOfSalesAccount(),
+    getUnpostedCostsLedgerSummary(),
   ]);
+
+  const cosTransactions = await prisma.transaction.findMany({
+    where: {
+      accountId: cosAccount.id,
+      debit: { gt: 0 },
+      journalEntry: { isDeleted: false, date: { gte: start, lte: end } },
+    },
+    include: { journalEntry: true },
+  });
 
   const income: Record<string, number> = {};
   incomeEntries.forEach((e) => {
@@ -64,8 +76,13 @@ export async function getIncomeStatement(req: AuthRequest, res: Response) {
     const key = a.serviceType;
     costOfSales[key] = (costOfSales[key] || 0) + Number(a.amount);
   });
-  // Booking vendor costs now flow through vendor postings; once posted, recognise them in PKR.
+  cosTransactions.forEach((t) => {
+    const amount = Number(t.amountPkr ?? t.debit);
+    costOfSales.LEDGER = (costOfSales.LEDGER || 0) + amount;
+  });
+  // Legacy posted vendor postings without unposted accrual path
   postedVendorPostings.forEach((p) => {
+    if (p.unpostedJournalEntryId) return;
     const amount = Number(p.actualCost ?? p.expectedCost);
     const pkr = p.currency === 'SAR' ? amount * Number(p.exchangeRate || 1) : amount;
     costOfSales[p.serviceType] = (costOfSales[p.serviceType] || 0) + pkr;
@@ -104,6 +121,7 @@ export async function getIncomeStatement(req: AuthRequest, res: Response) {
       totalVendorPayments,
       totalExpenses,
       netIncome: totalIncome - totalExpenses,
+      unpostedVendorCosts: unpostedLedger.balancePkr,
     },
   });
 }
