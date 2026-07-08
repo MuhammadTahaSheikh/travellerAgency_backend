@@ -16,64 +16,72 @@ import { createInternalTransfer, executeLedgerTransfer } from '../services/inter
 import { formatVendorDisplay } from '../utils/vendorDisplay';
 
 export async function getAccounts(req: AuthRequest, res: Response) {
-  const search = (req.query.search as string)?.trim();
-  const accounts = await prisma.account.findMany({
-    where: {
-      isActive: true,
-      ...(search
-        ? {
-            OR: [
-              { name: { contains: search } },
-              { code: { contains: search } },
-              { vendor: { vendorCode: { contains: search } } },
-              { vendor: { name: { contains: search } } },
-            ],
-          }
-        : {}),
-    },
-    include: {
-      customer: { select: { id: true, firstName: true, lastName: true, phone: true, companyName: true, tradePartnerId: true, customerType: true } },
-      vendor: { select: { id: true, name: true, vendorCode: true, category: true } },
-      employee: { select: { id: true, firstName: true, lastName: true } },
-    },
-    orderBy: { name: 'asc' },
-  });
-
-  type AccountRow = (typeof accounts)[number];
-  const company: AccountRow[] = [];
-  const customers: AccountRow[] = [];
-  const vendors: AccountRow[] = [];
-  const employees: AccountRow[] = [];
-  const unposted: AccountRow[] = [];
-
-  for (const acc of accounts) {
-    if (acc.code === 'UNPOSTED-001') unposted.push(acc);
-    else if (acc.customerId) customers.push(acc);
-    else if (acc.vendorId) vendors.push(acc);
-    else if (acc.employeeId) employees.push(acc);
-    else company.push(acc);
-  }
-
-  const sumBalance = (list: AccountRow[], field: 'balance' | 'balancePkr' | 'balanceSar' = 'balance') =>
-    list.reduce((s, a) => s + Number(a[field]), 0);
-
-  return res.json({
-    success: true,
-    data: accounts,
-    grouped: {
-      company: { label: 'Company (Agency)', accounts: company, totalBalance: sumBalance(company), totalBalancePkr: sumBalance(company, 'balancePkr'), totalBalanceSar: sumBalance(company, 'balanceSar') },
-      customers: { label: 'Customers', accounts: customers, totalBalance: sumBalance(customers), totalBalancePkr: sumBalance(customers, 'balancePkr'), totalBalanceSar: sumBalance(customers, 'balanceSar') },
-      vendors: { label: 'Vendors', accounts: vendors, totalBalance: sumBalance(vendors), totalBalancePkr: sumBalance(vendors, 'balancePkr'), totalBalanceSar: sumBalance(vendors, 'balanceSar') },
-      employees: { label: 'Employees', accounts: employees, totalBalance: sumBalance(employees), totalBalancePkr: sumBalance(employees, 'balancePkr'), totalBalanceSar: sumBalance(employees, 'balanceSar') },
-      unposted: {
-        label: 'Unposted Vendor Costs',
-        accounts: unposted,
-        totalBalance: sumBalance(unposted),
-        totalBalancePkr: Math.abs(sumBalance(unposted, 'balancePkr')),
-        totalBalanceSar: Math.abs(sumBalance(unposted, 'balanceSar')),
+  try {
+    const search = (req.query.search as string)?.trim();
+    const accounts = await prisma.account.findMany({
+      where: {
+        isActive: true,
+        ...(search
+          ? {
+              OR: [
+                { name: { contains: search } },
+                { code: { contains: search } },
+                { vendor: { vendorCode: { contains: search } } },
+                { vendor: { name: { contains: search } } },
+              ],
+            }
+          : {}),
       },
-    },
-  });
+      include: {
+        customer: { select: { id: true, firstName: true, lastName: true, phone: true, companyName: true, tradePartnerId: true, customerType: true } },
+        vendor: { select: { id: true, name: true, vendorCode: true, category: true } },
+        employee: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    type AccountRow = (typeof accounts)[number];
+    const company: AccountRow[] = [];
+    const customers: AccountRow[] = [];
+    const vendors: AccountRow[] = [];
+    const employees: AccountRow[] = [];
+    const unposted: AccountRow[] = [];
+
+    for (const acc of accounts) {
+      if (acc.code === 'UNPOSTED-001') unposted.push(acc);
+      else if (acc.customerId) customers.push(acc);
+      else if (acc.vendorId) vendors.push(acc);
+      else if (acc.employeeId) employees.push(acc);
+      else company.push(acc);
+    }
+
+    const sumBalance = (list: AccountRow[], field: 'balance' | 'balancePkr' | 'balanceSar' = 'balance') =>
+      list.reduce((s, a) => s + Number(a[field]), 0);
+
+    return res.json({
+      success: true,
+      data: accounts,
+      grouped: {
+        company: { label: 'Company (Agency)', accounts: company, totalBalance: sumBalance(company), totalBalancePkr: sumBalance(company, 'balancePkr'), totalBalanceSar: sumBalance(company, 'balanceSar') },
+        customers: { label: 'Customers', accounts: customers, totalBalance: sumBalance(customers), totalBalancePkr: sumBalance(customers, 'balancePkr'), totalBalanceSar: sumBalance(customers, 'balanceSar') },
+        vendors: { label: 'Vendors', accounts: vendors, totalBalance: sumBalance(vendors), totalBalancePkr: sumBalance(vendors, 'balancePkr'), totalBalanceSar: sumBalance(vendors, 'balanceSar') },
+        employees: { label: 'Employees', accounts: employees, totalBalance: sumBalance(employees), totalBalancePkr: sumBalance(employees, 'balancePkr'), totalBalanceSar: sumBalance(employees, 'balanceSar') },
+        unposted: {
+          label: 'Unposted Vendor Costs',
+          accounts: unposted,
+          totalBalance: sumBalance(unposted),
+          totalBalancePkr: Math.abs(sumBalance(unposted, 'balancePkr')),
+          totalBalanceSar: Math.abs(sumBalance(unposted, 'balanceSar')),
+        },
+      },
+    });
+  } catch (err) {
+    console.error('getAccounts failed:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to load ledger accounts. Ensure the production database schema is up to date (run: npx prisma db push).',
+    });
+  }
 }
 
 export async function getAccountTransactions(req: AuthRequest, res: Response) {
