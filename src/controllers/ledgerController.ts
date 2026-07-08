@@ -1,13 +1,14 @@
 import { Response } from 'express';
 import prisma, { TX_OPTS } from '../config/database';
 import { AuthRequest } from '../types';
-import { paginate, formatPagination, applyDateFilter } from '../utils/helpers';
+import { paginate, formatPagination, applyDateFilter, parseDateRange } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import {
   createJournalEntry,
   getLedgerTransactions,
   buildLedgerRows,
   CurrencyView,
+  isInternalLedgerRepairEntry,
 } from '../services/ledgerService';
 import { logActivity } from '../middleware/activityLogger';
 import { sendLedgerExport } from '../utils/ledgerExport';
@@ -24,6 +25,8 @@ export async function getAccounts(req: AuthRequest, res: Response) {
             OR: [
               { name: { contains: search } },
               { code: { contains: search } },
+              { vendor: { vendorCode: { contains: search } } },
+              { vendor: { name: { contains: search } } },
             ],
           }
         : {}),
@@ -92,7 +95,8 @@ export async function getAccountTransactions(req: AuthRequest, res: Response) {
     endDate: endDate ? new Date(endDate as string) : undefined,
   });
 
-  const rows = buildLedgerRows(transactions, currencyView).reverse();
+  const visible = transactions.filter((t) => !isInternalLedgerRepairEntry(t.journalEntry.description));
+  const rows = buildLedgerRows(visible, currencyView).reverse();
 
   return res.json({
     success: true,
@@ -150,7 +154,8 @@ export async function getGeneralLedger(req: AuthRequest, res: Response) {
     endDate: endDate ? new Date(endDate as string) : undefined,
   });
 
-  const rows = buildLedgerRows(transactions, currencyView).reverse();
+  const visible = transactions.filter((t) => !isInternalLedgerRepairEntry(t.journalEntry.description));
+  const rows = buildLedgerRows(visible, currencyView).reverse();
   return res.json({ success: true, data: rows, currency: currencyView });
 }
 
@@ -389,4 +394,56 @@ export async function exportGeneralLedger(req: AuthRequest, res: Response) {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="general-ledger.csv"');
   return res.send(csv);
+}
+
+export async function getUserPerformance(req: AuthRequest, res: Response) {
+  const { startDate, endDate } = req.query;
+  const dateRange = parseDateRange(startDate as string | undefined, endDate as string | undefined);
+
+  const users = await prisma.user.findMany({
+    where: { isActive: true },
+    select: { id: true, firstName: true, lastName: true, email: true },
+    orderBy: { firstName: 'asc' },
+  });
+
+  const rows = await Promise.all(
+    users.map(async (u) => {
+      const bookings = await prisma.booking.findMany({
+        where: {
+          createdById: u.id,
+          status: { in: ['CONFIRMED', 'COMPLETED'] },
+          ...(dateRange ? { createdAt: dateRange } : {}),
+        },
+        include: { serviceItems: true },
+      });
+
+      const sales = bookings.reduce((sum, b) => sum + Number(b.totalAmount), 0);
+      const cost = bookings.reduce(
+        (sum, b) => sum + b.serviceItems.reduce((c, item) => c + Number(item.costAmount || 0), 0),
+        0
+      );
+
+      return {
+        userId: u.id,
+        name: `${u.firstName} ${u.lastName}`.trim(),
+        email: u.email,
+        bookingCount: bookings.length,
+        sales,
+        cost,
+        profit: sales - cost,
+      };
+    })
+  );
+
+  const active = rows.filter((r) => r.bookingCount > 0);
+  return res.json({
+    success: true,
+    data: active,
+    totals: {
+      sales: active.reduce((s, r) => s + r.sales, 0),
+      cost: active.reduce((s, r) => s + r.cost, 0),
+      profit: active.reduce((s, r) => s + r.profit, 0),
+      bookingCount: active.reduce((s, r) => s + r.bookingCount, 0),
+    },
+  });
 }

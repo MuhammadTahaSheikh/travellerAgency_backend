@@ -298,10 +298,13 @@ export async function getLedgerTransactions(filters?: {
   startDate?: Date;
   endDate?: Date;
 }) {
-  const where: Prisma.TransactionWhereInput = {};
+  const where: Prisma.TransactionWhereInput = {
+    journalEntry: { isDeleted: false },
+  };
   if (filters?.accountId) where.accountId = filters.accountId;
   if (filters?.startDate || filters?.endDate) {
     where.journalEntry = {
+      isDeleted: false,
       date: {
         ...(filters.startDate ? { gte: filters.startDate } : {}),
         ...(filters.endDate ? { lte: filters.endDate } : {}),
@@ -333,6 +336,16 @@ export async function getLedgerTransactions(filters?: {
 }
 
 export type CurrencyView = 'PKR' | 'SAR';
+
+/** Hide internal repair/reversal entries from ledger UI — they net to zero but skew running balances. */
+export function isInternalLedgerRepairEntry(description?: string | null) {
+  if (!description) return false;
+  return (
+    description.startsWith('Repair stale vendor post') ||
+    description.startsWith('Reversal: Reverse stale unposted accrual') ||
+    description.startsWith('Reversal: Reverse unposted accrual')
+  );
+}
 
 function amountInCurrency(
   t: { debit: unknown; credit: unknown; amountPkr: unknown; amountSar: unknown; currency?: string },
@@ -409,6 +422,10 @@ export async function reverseJournalEntry(
     debit: Number(t.credit),
     credit: Number(t.debit),
     description: `Reversal: ${t.description || ''}`,
+    currency: t.currency as 'PKR' | 'SAR' | undefined,
+    exchangeRate: t.exchangeRate != null ? Number(t.exchangeRate) : undefined,
+    amountPkr: t.amountPkr != null ? Number(t.amountPkr) : undefined,
+    amountSar: t.amountSar != null ? Number(t.amountSar) : undefined,
   }));
 
   const reversal = await createJournalEntry(description, reversedLines, { reference: original.reference || undefined }, client);

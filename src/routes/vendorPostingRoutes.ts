@@ -9,7 +9,7 @@ router.use(authenticate);
 router.get('/', vendorPosting.getVendorPostings);
 router.get('/pending-summary', vendorPosting.getPendingCostsSummary);
 router.post('/', authorizeMinRole('ADMIN'), vendorPosting.createVendorPostingHandler);
-router.put('/:id', authorizeMinRole('ADMIN'), vendorPosting.updateVendorPosting);
+router.put('/:id', vendorPosting.updateVendorPosting);
 router.post('/:id/confirm', authorizeMinRole('ADMIN'), vendorPosting.confirmVendorPosting);
 
 export default router;

@@ -337,7 +337,7 @@ export async function getAccounts(_req: AuthRequest, res: Response) {
 }
 
 export async function createAccount(req: AuthRequest, res: Response) {
-  const { name, code, type, description, employeeId } = req.body;
+  const { name, code, type, description, employeeId, currency } = req.body;
   if (!name || !type) {
     return res.status(400).json({ success: false, error: 'Name and type are required' });
   }
@@ -363,6 +363,7 @@ export async function createAccount(req: AuthRequest, res: Response) {
       type,
       description,
       employeeId: employeeId || null,
+      currency: currency === 'SAR' ? 'SAR' : 'PKR',
     },
     include: { employee: { select: { id: true, firstName: true, lastName: true } } },
   });
@@ -371,7 +372,7 @@ export async function createAccount(req: AuthRequest, res: Response) {
 }
 
 export async function updateAccount(req: AuthRequest, res: Response) {
-  const { name, description, employeeId } = req.body;
+  const { name, description, employeeId, currency } = req.body;
   const account = await prisma.account.findUnique({ where: { id: paramId(req) } });
   if (!account) return res.status(404).json({ success: false, error: 'Account not found' });
   if (!['CASH', 'BANK'].includes(account.type) || account.customerId || account.vendorId) {
@@ -384,6 +385,7 @@ export async function updateAccount(req: AuthRequest, res: Response) {
       name,
       description,
       employeeId: employeeId !== undefined ? (employeeId || null) : undefined,
+      currency: currency === 'SAR' ? 'SAR' : currency === 'PKR' ? 'PKR' : undefined,
     },
     include: { employee: { select: { id: true, firstName: true, lastName: true } } },
   });

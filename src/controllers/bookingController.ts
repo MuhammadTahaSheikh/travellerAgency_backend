@@ -11,7 +11,8 @@ import {
   createCheckInsFromBooking,
   syncBookingInvoiceAndLedger,
 } from '../services/invoiceService';
-import { postVendorCostToLedger } from '../services/vendorPostingService';
+import { postVendorCostToLedger, syncPendingVendorPostingsFromBooking } from '../services/vendorPostingService';
+import { processBookingRefund } from '../services/bookingRefundService';
 
 function derivePaymentStatus(paidAmount: number, totalAmount: number): string {
   if (paidAmount <= 0) return 'Unpaid';
@@ -51,6 +52,11 @@ function canUserModifyBooking(role: string | undefined, bookingStatus: string): 
   if (role === 'ADMIN') return true;
   if (bookingStatus === 'CONFIRMED' || bookingStatus === 'REQUEST_CONFIRMATION') return false;
   return true;
+}
+
+function canUserEditBookingVendorCost(role: string | undefined, bookingStatus: string): boolean {
+  if (isSuperAdmin(role) || role === 'ADMIN') return true;
+  return bookingStatus === 'CONFIRMED';
 }
 
 function canDirectConfirmBooking(role?: string) {
@@ -471,7 +477,11 @@ export async function updateBookingPricing(req: AuthRequest, res: Response) {
 
   if (!booking) return res.status(404).json({ success: false, error: 'Booking not found' });
 
-  if (!canUserModifyBooking(req.user?.role, booking.status)) {
+  const role = req.user?.role;
+  const userCostOnly =
+    role === 'USER' && booking.status === 'CONFIRMED' && !canUserModifyBooking(role, booking.status);
+
+  if (!canUserModifyBooking(role, booking.status) && !canUserEditBookingVendorCost(role, booking.status)) {
     return res.status(403).json({
       success: false,
       error: 'Confirmed bookings cannot be modified. Contact Super Admin.',
@@ -479,6 +489,13 @@ export async function updateBookingPricing(req: AuthRequest, res: Response) {
   }
 
   const { priceAdult, priceChild, priceInfant, serviceItems } = req.body;
+
+  if (userCostOnly && (priceAdult != null || priceChild != null || priceInfant != null)) {
+    return res.status(403).json({
+      success: false,
+      error: 'You can only edit vendor costs on confirmed bookings.',
+    });
+  }
 
   let totalAmount = Number(booking.totalAmount);
 
@@ -512,6 +529,7 @@ export async function updateBookingPricing(req: AuthRequest, res: Response) {
           const incoming = serviceItems[i] as {
             id?: string;
             costAmount?: number;
+            vendorId?: string | null;
             details?: Record<string, unknown>;
           };
           const match = incoming.id
@@ -523,6 +541,7 @@ export async function updateBookingPricing(req: AuthRequest, res: Response) {
             where: { id: match.id },
             data: {
               costAmount: incoming.costAmount != null ? Number(incoming.costAmount) : match.costAmount,
+              vendorId: incoming.vendorId !== undefined ? (incoming.vendorId || null) : match.vendorId,
               details: incoming.details ? JSON.parse(JSON.stringify(incoming.details)) : match.details,
             },
           });
@@ -543,7 +562,7 @@ export async function updateBookingPricing(req: AuthRequest, res: Response) {
           tx.bookingServiceItem.create({
             data: {
               bookingId: booking.id,
-              serviceType: item.serviceType as 'TICKET' | 'VISA' | 'HOTEL' | 'TRANSPORT' | 'PACKAGE',
+              serviceType: item.serviceType as 'TICKET' | 'VISA' | 'HOTEL' | 'TRANSPORT' | 'PACKAGE' | 'OTHER',
               description: item.description,
               amount: item.amount,
               costAmount: item.costAmount || 0,
@@ -589,6 +608,67 @@ export async function updateBookingPricing(req: AuthRequest, res: Response) {
     data: enrichBooking(updated as Parameters<typeof enrichBooking>[0]),
     invoice,
   });
+}
+
+export async function requestBookingConfirmation(req: AuthRequest, res: Response) {
+  const booking = await prisma.booking.findUnique({ where: { id: paramId(req) } });
+  if (!booking) return res.status(404).json({ success: false, error: 'Booking not found' });
+  if (booking.status !== 'DRAFT' && booking.status !== 'PENDING') {
+    return res.status(400).json({ success: false, error: 'Only draft bookings can request confirmation' });
+  }
+
+  try {
+    await handleBookingDraft(booking.id);
+    await submitConfirmationRequest(
+      booking.id,
+      req.user!.id,
+      `${req.user!.firstName} ${req.user!.lastName}`
+    );
+    const updated = await prisma.booking.update({
+      where: { id: booking.id },
+      data: { status: 'REQUEST_CONFIRMATION' },
+    });
+    await logActivity(req, 'UPDATE', 'Booking', booking.id, 'Requested confirmation');
+    return res.json({ success: true, data: updated });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to request confirmation';
+    return res.status(500).json({ success: false, error: message });
+  }
+}
+
+export async function createBookingRefund(req: AuthRequest, res: Response) {
+  if (!isSuperAdmin(req.user?.role)) {
+    return res.status(403).json({ success: false, error: 'Only Super Admin can process refunds' });
+  }
+
+  const {
+    customerAmount,
+    currency,
+    exchangeRate,
+    vendorAmount,
+    vendorPostingId,
+    serviceItemId,
+    notes,
+  } = req.body;
+
+  try {
+    const refund = await processBookingRefund({
+      bookingId: paramId(req),
+      createdById: req.user!.id,
+      customerAmount: Number(customerAmount),
+      currency: currency === 'SAR' ? 'SAR' : 'PKR',
+      exchangeRate: exchangeRate != null ? Number(exchangeRate) : undefined,
+      vendorAmount: vendorAmount != null ? Number(vendorAmount) : undefined,
+      vendorPostingId,
+      serviceItemId,
+      notes,
+    });
+    await logActivity(req, 'CREATE', 'BookingRefund', refund.id);
+    return res.status(201).json({ success: true, data: refund });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to process refund';
+    return res.status(400).json({ success: false, error: message });
+  }
 }
 
 export async function confirmBookingVendorPosting(req: AuthRequest, res: Response) {

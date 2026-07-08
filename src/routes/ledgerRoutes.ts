@@ -16,5 +16,6 @@ router.post('/internal-transfers', authorizeMinRole('ADMIN'), ledger.createInter
 router.get('/general-ledger/export', ledger.exportGeneralLedger);
 router.get('/general-ledger', ledger.getGeneralLedger);
 router.get('/trial-balance', ledger.getTrialBalanceReport);
+router.get('/user-performance', ledger.getUserPerformance);
 
 export default router;

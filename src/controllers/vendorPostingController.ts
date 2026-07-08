@@ -3,7 +3,7 @@ import prisma from '../config/database';
 import { AuthRequest } from '../types';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
-import { createVendorPosting, postVendorCostToLedger, getPendingVendorCosts } from '../services/vendorPostingService';
+import { createVendorPosting, postVendorCostToLedger, getPendingVendorCosts, resyncUnpostedAccrualForPosting } from '../services/vendorPostingService';
 
 export async function getVendorPostings(req: AuthRequest, res: Response) {
   const status = req.query.status as string;
@@ -68,12 +68,21 @@ export async function updateVendorPosting(req: AuthRequest, res: Response) {
   }
 
   const { vendorId, expectedCost, dueDate, description } = req.body;
+  const isRegularUser = req.user?.role === 'USER';
+  if (isRegularUser && expectedCost != null && Number(expectedCost) !== Number(posting.expectedCost)) {
+    return res.status(403).json({ success: false, error: 'You can only assign vendors, not change expected cost' });
+  }
+  if (isRegularUser && description != null && description !== posting.description) {
+    return res.status(403).json({ success: false, error: 'You can only assign vendors on this posting' });
+  }
+
   const resolvedVendorId = vendorId ?? posting.vendorId;
+  const nextExpectedCost = expectedCost != null ? Number(expectedCost) : Number(posting.expectedCost);
   const updated = await prisma.vendorPosting.update({
     where: { id: posting.id },
     data: {
       vendorId: resolvedVendorId,
-      expectedCost: expectedCost != null ? Number(expectedCost) : posting.expectedCost,
+      expectedCost: nextExpectedCost,
       dueDate: dueDate ? new Date(dueDate) : posting.dueDate,
       description: description ?? posting.description,
       ...(posting.status === 'UNASSIGNED' && resolvedVendorId ? { status: 'PENDING' } : {}),
@@ -81,8 +90,17 @@ export async function updateVendorPosting(req: AuthRequest, res: Response) {
     include: { vendor: true, invoice: true },
   });
 
+  if (nextExpectedCost !== Number(posting.expectedCost) && posting.unpostedJournalEntryId) {
+    await resyncUnpostedAccrualForPosting(posting.id);
+  }
+
+  const refreshed = await prisma.vendorPosting.findUnique({
+    where: { id: posting.id },
+    include: { vendor: true, invoice: true },
+  });
+
   await logActivity(req, 'UPDATE', 'VendorPosting', posting.id);
-  return res.json({ success: true, data: updated });
+  return res.json({ success: true, data: refreshed ?? updated });
 }
 
 export async function confirmVendorPosting(req: AuthRequest, res: Response) {

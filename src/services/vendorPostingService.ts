@@ -1,8 +1,9 @@
 import prisma, { TX_OPTS } from '../config/database';
 import { Prisma, ServiceType } from '@prisma/client';
-import { createJournalEntry } from './ledgerService';
+import { createJournalEntry, reverseJournalEntry } from './ledgerService';
 import { createVendorAccount } from './vendorService';
 import { formatVendorDisplay } from '../utils/vendorDisplay';
+import { buildDetailedPostingDescription } from '../utils/postingDescription';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -46,6 +47,66 @@ async function postingAmounts(
   return { rate, amountPkr, amountSar };
 }
 
+function journalLine(
+  accountId: string,
+  side: 'debit' | 'credit',
+  amount: number,
+  payCurrency: 'PKR' | 'SAR',
+  amounts: Awaited<ReturnType<typeof postingAmounts>>,
+  description: string
+) {
+  return {
+    accountId,
+    [side]: amount,
+    description,
+    currency: payCurrency,
+    exchangeRate: amounts.rate,
+    amountPkr: amounts.amountPkr,
+    amountSar: amounts.amountSar,
+  };
+}
+
+/** Reverse stale unposted accrual and re-book at the current expectedCost. */
+export async function resyncUnpostedAccrualForPosting(postingId: string, tx?: TxClient) {
+  const run = async (client: TxClient) => {
+    const posting = await client.vendorPosting.findUnique({ where: { id: postingId } });
+    if (!posting || posting.status === 'POSTED' || posting.status === 'CANCELLED') return posting;
+
+    const cost = Number(posting.expectedCost);
+    if (cost <= 0) {
+      if (posting.unpostedJournalEntryId) {
+        await reverseJournalEntry(
+          posting.unpostedJournalEntryId,
+          `Reverse unposted accrual: ${posting.description}`,
+          client
+        );
+        return client.vendorPosting.update({
+          where: { id: postingId },
+          data: { unpostedJournalEntryId: null },
+        });
+      }
+      return posting;
+    }
+
+    if (posting.unpostedJournalEntryId) {
+      await reverseJournalEntry(
+        posting.unpostedJournalEntryId,
+        `Reverse stale unposted accrual: ${posting.description}`,
+        client
+      );
+      await client.vendorPosting.update({
+        where: { id: postingId },
+        data: { unpostedJournalEntryId: null },
+      });
+    }
+
+    return accrueUnpostedCostToLedger(postingId, client);
+  };
+
+  if (tx) return run(tx);
+  return prisma.$transaction(run, TX_OPTS);
+}
+
 /** Recognize cost in COS and park payable in the unposted vendor costs ledger. */
 export async function accrueUnpostedCostToLedger(postingId: string, tx?: TxClient) {
   const run = async (client: TxClient) => {
@@ -77,7 +138,7 @@ export async function accrueUnpostedCostToLedger(postingId: string, tx?: TxClien
         {
           accountId: unpostedAccount.id,
           credit: cost,
-          description: `Pending vendor posting — ${posting.serviceType}`,
+          description: posting.description,
           currency: payCurrency,
           exchangeRate: rate,
           amountPkr,
@@ -171,6 +232,7 @@ export async function postVendorCostToLedger(
     }
     if (posting.status === 'POSTED' && posting.journalEntryId) return posting;
 
+    const estimated = Number(posting.expectedCost);
     const cost = actualCost ?? Number(posting.actualCost ?? posting.expectedCost);
     if (!posting.vendorId || !posting.vendor) throw new Error('Vendor is required to post cost');
 
@@ -180,37 +242,66 @@ export async function postVendorCostToLedger(
     }
 
     const payCurrency = (posting.currency || 'PKR') as 'PKR' | 'SAR';
-    const { rate, amountPkr, amountSar } = await postingAmounts(cost, payCurrency, posting.exchangeRate != null ? Number(posting.exchangeRate) : undefined);
+    const rateArg = posting.exchangeRate != null ? Number(posting.exchangeRate) : undefined;
+    const estimatedAmt = await postingAmounts(estimated, payCurrency, rateArg);
+    const actualAmt = await postingAmounts(cost, payCurrency, rateArg);
 
     const vendorLabel = formatVendorDisplay(posting.vendor, posting.vendor.name);
-
-    const vendorLine = {
-      accountId: vendorAccount.id,
-      credit: cost,
-      description: `Payable to ${vendorLabel}`,
-      currency: payCurrency,
-      exchangeRate: rate,
-      amountPkr,
-      amountSar,
-    };
 
     let entry;
     if (posting.unpostedJournalEntryId) {
       const unpostedAccount = await getOrCreateUnpostedVendorCostsAccount(client);
+      const cosAccount = await getOrCreateCostOfSalesAccount(client);
+      const lines = [
+        journalLine(
+          unpostedAccount.id,
+          'debit',
+          estimated,
+          payCurrency,
+          estimatedAmt,
+          `Clear unposted accrual — ${posting.description}`
+        ),
+        journalLine(
+          vendorAccount.id,
+          'credit',
+          cost,
+          payCurrency,
+          actualAmt,
+          `Payable to ${vendorLabel}`
+        ),
+      ];
+
+      const variance = estimated - cost;
+      if (Math.abs(variance) > 0.01) {
+        const varianceAmt = await postingAmounts(Math.abs(variance), payCurrency, rateArg);
+        if (variance > 0) {
+          lines.push(
+            journalLine(
+              cosAccount.id,
+              'credit',
+              variance,
+              payCurrency,
+              varianceAmt,
+              `Cost adjustment (estimated → actual): ${posting.description}`
+            )
+          );
+        } else {
+          lines.push(
+            journalLine(
+              cosAccount.id,
+              'debit',
+              Math.abs(variance),
+              payCurrency,
+              varianceAmt,
+              `Cost adjustment (estimated → actual): ${posting.description}`
+            )
+          );
+        }
+      }
+
       entry = await createJournalEntry(
         `Vendor cost posted: ${posting.description}`,
-        [
-          {
-            accountId: unpostedAccount.id,
-            debit: cost,
-            description: `Transfer to ${vendorLabel}`,
-            currency: payCurrency,
-            exchangeRate: rate,
-            amountPkr,
-            amountSar,
-          },
-          vendorLine,
-        ],
+        lines,
         { reference: posting.id },
         client
       );
@@ -218,16 +309,22 @@ export async function postVendorCostToLedger(
       entry = await createJournalEntry(
         `Vendor cost: ${posting.description}`,
         [
-          {
-            accountId: (await getOrCreateCostOfSalesAccount(client)).id,
-            debit: cost,
-            description: posting.description,
-            currency: payCurrency,
-            exchangeRate: rate,
-            amountPkr,
-            amountSar,
-          },
-          vendorLine,
+          journalLine(
+            (await getOrCreateCostOfSalesAccount(client)).id,
+            'debit',
+            cost,
+            payCurrency,
+            actualAmt,
+            posting.description
+          ),
+          journalLine(
+            vendorAccount.id,
+            'credit',
+            cost,
+            payCurrency,
+            actualAmt,
+            `Payable to ${vendorLabel}`
+          ),
         ],
         { reference: posting.id },
         client
@@ -239,6 +336,7 @@ export async function postVendorCostToLedger(
       data: {
         status: 'POSTED',
         actualCost: cost,
+        expectedCost: cost,
         postedAt: new Date(),
         journalEntryId: entry.id,
       },
@@ -282,6 +380,19 @@ type ServiceItemRow = {
 
 const resolveVendorId = (provided?: string | null) => (provided ? provided : undefined);
 
+function bookingPostingContext(booking: {
+  bookingNumber: string;
+  guestName?: string | null;
+  customer?: { firstName: string; lastName: string; companyName?: string | null } | null;
+}): PostingContext {
+  const customerName =
+    booking.guestName ||
+    booking.customer?.companyName ||
+    `${booking.customer?.firstName || ''} ${booking.customer?.lastName || ''}`.trim() ||
+    'Customer';
+  return { bookingNumber: booking.bookingNumber, customerName };
+}
+
 function rowPostingLabel(serviceType: ServiceType, row: Record<string, string>, fallback: string) {
   if (serviceType === 'HOTEL') {
     return [row.hotelName, row.city, row.roomType].filter(Boolean).join(' - ') || fallback;
@@ -292,8 +403,13 @@ function rowPostingLabel(serviceType: ServiceType, row: Record<string, string>, 
   return fallback;
 }
 
+type PostingContext = { bookingNumber: string; customerName: string };
+
 /** Build expected vendor posting lines from booking service items (same order as create). */
-export function buildPostingSpecsFromServiceItems(serviceItems: ServiceItemRow[]): BookingPostingSpec[] {
+export function buildPostingSpecsFromServiceItems(
+  serviceItems: ServiceItemRow[],
+  context?: PostingContext
+): BookingPostingSpec[] {
   const specs: BookingPostingSpec[] = [];
 
   for (const item of serviceItems) {
@@ -307,9 +423,19 @@ export function buildPostingSpecsFromServiceItems(serviceItems: ServiceItemRow[]
       for (const row of rows) {
         const cost = Number(row.costTotal || 0);
         if (cost <= 0) continue;
-        const description = rowPostingLabel(item.serviceType, row, item.description);
+        const shortLabel = rowPostingLabel(item.serviceType, row, item.description);
+        const description = context
+          ? buildDetailedPostingDescription(
+              context.bookingNumber,
+              context.customerName,
+              item.serviceType,
+              item.description,
+              details,
+              row
+            )
+          : shortLabel;
         specs.push({
-          key: `${item.serviceType}::${description}`,
+          key: `${item.serviceType}::${shortLabel}`,
           serviceType: item.serviceType,
           description,
           expectedCost: cost,
@@ -323,10 +449,19 @@ export function buildPostingSpecsFromServiceItems(serviceItems: ServiceItemRow[]
 
     const cost = details.costOriginal != null ? Number(details.costOriginal) : Number(item.costAmount);
     if (cost <= 0) continue;
+    const description = context
+      ? buildDetailedPostingDescription(
+          context.bookingNumber,
+          context.customerName,
+          item.serviceType,
+          item.description,
+          details
+        )
+      : item.description;
     specs.push({
       key: `${item.serviceType}::${item.description}`,
       serviceType: item.serviceType,
-      description: item.description,
+      description,
       expectedCost: cost,
       vendorId: resolveVendorId(item.vendorId),
       currency,
@@ -345,11 +480,12 @@ export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx
   const run = async (client: TxClient) => {
     const booking = await client.booking.findUnique({
       where: { id: bookingId },
-      include: { serviceItems: true },
+      include: { serviceItems: true, customer: true },
     });
     if (!booking) return [];
 
-    const specs = buildPostingSpecsFromServiceItems(booking.serviceItems as ServiceItemRow[]);
+    const context = bookingPostingContext(booking);
+    const specs = buildPostingSpecsFromServiceItems(booking.serviceItems as ServiceItemRow[], context);
     const pending = await client.vendorPosting.findMany({
       where: { bookingId, status: { in: ['PENDING', 'UNASSIGNED'] } },
       orderBy: { createdAt: 'asc' },
@@ -379,16 +515,37 @@ export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx
       pendingByKey.set(spec.key, queue);
 
       if (posting) {
-        const result = await client.vendorPosting.update({
+        const vendorId = spec.vendorId ?? null;
+        const data: {
+          expectedCost: number;
+          currency: 'PKR' | 'SAR';
+          exchangeRate?: number;
+          vendorId?: string | null;
+          status?: 'UNASSIGNED' | 'PENDING';
+        } = {
+          expectedCost: spec.expectedCost,
+          currency: spec.currency,
+          exchangeRate: spec.exchangeRate,
+        };
+
+        if (posting.status !== 'POSTED' && posting.status !== 'CANCELLED') {
+          data.vendorId = vendorId;
+          data.status = vendorId ? 'PENDING' : 'UNASSIGNED';
+        }
+
+        await client.vendorPosting.update({
           where: { id: posting.id },
-          data: {
-            expectedCost: spec.expectedCost,
-            currency: spec.currency,
-            exchangeRate: spec.exchangeRate,
-          },
-          include: { vendor: true, invoiceItem: true },
+          data: { ...data, description: spec.description },
         });
-        updated.push(result);
+        if (Number(posting.expectedCost) !== spec.expectedCost && posting.unpostedJournalEntryId) {
+          await resyncUnpostedAccrualForPosting(posting.id, client);
+        }
+        updated.push(
+          await client.vendorPosting.findUniqueOrThrow({
+            where: { id: posting.id },
+            include: { vendor: true, invoiceItem: true },
+          })
+        );
         continue;
       }
 
@@ -400,6 +557,7 @@ export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx
           expectedCost: spec.expectedCost,
           currency: spec.currency,
           exchangeRate: spec.exchangeRate,
+          vendorId: spec.vendorId,
           postingType: 'PENDING',
         },
         client
@@ -426,11 +584,12 @@ export async function createVendorPostingsFromBooking(bookingId: string, tx?: Tx
 
     const booking = await client.booking.findUnique({
       where: { id: bookingId },
-      include: { serviceItems: true },
+      include: { serviceItems: true, customer: true },
     });
     if (!booking) return [];
 
-    const specs = buildPostingSpecsFromServiceItems(booking.serviceItems as ServiceItemRow[]);
+    const context = bookingPostingContext(booking);
+    const specs = buildPostingSpecsFromServiceItems(booking.serviceItems as ServiceItemRow[], context);
     const postings = [];
 
     for (const spec of specs) {
@@ -442,6 +601,7 @@ export async function createVendorPostingsFromBooking(bookingId: string, tx?: Tx
           expectedCost: spec.expectedCost,
           currency: spec.currency,
           exchangeRate: spec.exchangeRate,
+          vendorId: spec.vendorId,
           postingType: 'PENDING',
         },
         client
