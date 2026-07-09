@@ -4,11 +4,13 @@ import { AuthRequest } from '../types';
 import { paginate, formatPagination } from '../utils/helpers';
 import { paramId } from '../utils/params';
 import { logActivity } from '../middleware/activityLogger';
-import { generateVoucherFromPayment, renderVoucherHtml, markVoucherShared } from '../services/voucherService';
+import { generateVoucherFromPayment, renderVoucherHtml, markVoucherShared, syncMissingVouchersForApprovedInvoices } from '../services/voucherService';
 import { ensureVoucherShareToken } from '../services/shareTokenService';
 
 export async function getVouchers(req: AuthRequest, res: Response) {
   const { page, limit, skip } = paginate(req.query.page as string, req.query.limit as string);
+
+  await syncMissingVouchersForApprovedInvoices();
 
   const [vouchers, total] = await Promise.all([
     prisma.voucher.findMany({
