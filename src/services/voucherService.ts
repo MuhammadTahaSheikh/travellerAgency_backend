@@ -2,6 +2,7 @@ import prisma from '../config/database';
 import { voucherNumberFromLinkedDocument } from './numberingService';
 import { VoucherFormat } from '@prisma/client';
 import { issuerFromCustomer, logoHtml, BRAND_NAME } from './documentBrand';
+import { renderHotelDefiniteConfirmationHtml } from './hotelVoucherTemplate';
 
 function paymentStatusLabel(invoice: { totalAmount: unknown; paidAmount: unknown } | null | undefined) {
   if (!invoice) return 'PAID';
@@ -108,7 +109,13 @@ export async function renderVoucherHtml(voucherId: string, format?: VoucherForma
   const voucher = await prisma.voucher.findUnique({
     where: { id: voucherId },
     include: {
-      booking: { include: { customer: true, serviceItems: true } },
+      booking: {
+        include: {
+          customer: true,
+          createdBy: { select: { firstName: true, lastName: true, phone: true } },
+          serviceItems: { include: { vendor: { select: { vendorCode: true } } } },
+        },
+      },
       payment: true,
       invoice: { include: { customer: true, items: true } },
     },
@@ -121,6 +128,10 @@ export async function renderVoucherHtml(voucherId: string, format?: VoucherForma
 
   const issuer = issuerFromCustomer(customer);
   const fmt = format || voucher.voucherFormat;
+
+  if (fmt === 'HOTEL') {
+    return renderHotelDefiniteConfirmationHtml(voucher, baseUrl);
+  }
   const brandLogo = issuer.isB2B ? '' : `<div style="margin-bottom:12px">${logoHtml(baseUrl)}</div>`;
   const transport = voucher.transportDetails as Record<string, string> | null;
   const remaining = Number(voucher.remainingBalance || 0);
@@ -171,7 +182,7 @@ ${brandLogo}
 ${fmt !== 'TRANSPORT' && voucher.hotelName ? `<div class="section"><div class="label">Hotel</div><div class="value">${voucher.hotelName}</div></div>` : ''}
 ${fmt !== 'TRANSPORT' && voucher.checkInDate ? `<div class="section"><div class="label">Check-in</div><div class="value">${new Date(voucher.checkInDate).toLocaleDateString()}${voucher.checkOutDate ? ` — Check-out: ${new Date(voucher.checkOutDate).toLocaleDateString()}` : ''}</div></div>` : ''}
 ${fmt !== 'TRANSPORT' && voucher.roomDetails ? `<div class="section"><div class="label">Room Details</div><div class="value">${voucher.roomDetails}</div></div>` : ''}
-${fmt !== 'HOTEL' && transport ? `<div class="section"><div class="label">Transport</div><div class="value">${transport.description || ''}<br>${transport.pickupLocation ? `Pickup: ${transport.pickupLocation}<br>` : ''}${transport.dropoffLocation ? `Drop-off: ${transport.dropoffLocation}<br>` : ''}${transport.transportDate ? `Date: ${transport.transportDate}` : ''}</div></div>` : ''}
+${transport ? `<div class="section"><div class="label">Transport</div><div class="value">${transport.description || ''}<br>${transport.pickupLocation ? `Pickup: ${transport.pickupLocation}<br>` : ''}${transport.dropoffLocation ? `Drop-off: ${transport.dropoffLocation}<br>` : ''}${transport.transportDate ? `Date: ${transport.transportDate}` : ''}</div></div>` : ''}
 ${fmt === 'COMPLETE' && servicesHtml ? `<div class="section"><div class="label">Services</div><table><thead><tr><th>Type</th><th>Description</th><th>Amount</th></tr></thead><tbody>${servicesHtml}</tbody></table></div>` : ''}
 ${voucher.notes ? `<div class="section"><div class="label">Notes</div><div class="value">${voucher.notes}</div></div>` : ''}
 <p style="margin-top:32px;color:#64748b;font-size:13px">${issuer.isB2B ? issuer.name : BRAND_NAME} | ${voucher.issuedAt ? new Date(voucher.issuedAt).toLocaleString() : ''}</p>
