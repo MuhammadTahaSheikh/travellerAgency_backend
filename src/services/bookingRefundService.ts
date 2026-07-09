@@ -3,6 +3,63 @@ import { createJournalEntry, createCustomerAccount, getOrCreateIncomeAccount } f
 import { getOrCreateCostOfSalesAccount, resyncUnpostedAccrualForPosting } from './vendorPostingService';
 import { createVendorAccount } from './vendorService';
 
+const DEFAULT_SAR_RATE = 75;
+
+export function convertRefundAmountToBookingCurrency(
+  amount: number,
+  refundCurrency: 'PKR' | 'SAR',
+  bookingCurrency: 'PKR' | 'SAR',
+  rate = DEFAULT_SAR_RATE,
+): number {
+  if (refundCurrency === bookingCurrency) return amount;
+  if (refundCurrency === 'SAR' && bookingCurrency === 'PKR') return amount * rate;
+  return amount / rate;
+}
+
+export function deriveBookingRefundStatus(
+  totalAmount: number,
+  refunds: { customerAmount: unknown; currency: string }[],
+  bookingCurrency: 'PKR' | 'SAR' = 'PKR',
+): 'REFUNDED' | 'PARTIALLY_REFUNDED' | null {
+  if (!refunds.length) return null;
+
+  const totalRefunded = refunds.reduce((sum, refund) => {
+    return sum + convertRefundAmountToBookingCurrency(
+      Number(refund.customerAmount),
+      refund.currency as 'PKR' | 'SAR',
+      bookingCurrency,
+    );
+  }, 0);
+
+  if (totalRefunded <= 0) return null;
+  if (totalRefunded >= totalAmount - 0.01) return 'REFUNDED';
+  return 'PARTIALLY_REFUNDED';
+}
+
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+export async function syncBookingRefundStatus(bookingId: string, tx?: TxClient) {
+  const client = tx || prisma;
+  const booking = await client.booking.findUnique({
+    where: { id: bookingId },
+    include: { refunds: true },
+  });
+  if (!booking) return null;
+
+  const nextStatus = deriveBookingRefundStatus(
+    Number(booking.totalAmount),
+    booking.refunds,
+    booking.currency,
+  );
+  if (!nextStatus || booking.status === nextStatus) return booking.status;
+
+  return client.booking.update({
+    where: { id: bookingId },
+    data: { status: nextStatus },
+    select: { status: true },
+  });
+}
+
 export async function processBookingRefund(data: {
   bookingId: string;
   createdById: string;
@@ -25,8 +82,9 @@ export async function processBookingRefund(data: {
       },
     });
     if (!booking) throw new Error('Booking not found');
-    if (booking.status !== 'CONFIRMED' && booking.status !== 'COMPLETED') {
-      throw new Error('Refunds are only allowed on confirmed or completed bookings');
+    const refundableStatuses = ['CONFIRMED', 'COMPLETED', 'PARTIALLY_REFUNDED'] as const;
+    if (!refundableStatuses.includes(booking.status as (typeof refundableStatuses)[number])) {
+      throw new Error('Refunds are only allowed on confirmed, completed, or partially refunded bookings');
     }
 
     let customerAccount = booking.customer?.account;
@@ -138,6 +196,8 @@ export async function processBookingRefund(data: {
       },
       include: { createdBy: { select: { firstName: true, lastName: true } } },
     });
+
+    await syncBookingRefundStatus(data.bookingId, tx);
 
     return refund;
   }, TX_OPTS);

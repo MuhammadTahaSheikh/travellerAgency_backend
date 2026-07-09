@@ -29,6 +29,8 @@ enum BookingStatus {
   CONFIRMED
   CANCELLED
   COMPLETED
+  PARTIALLY_REFUNDED
+  REFUNDED
 }
 
 enum BookingConfirmationRequestStatus {

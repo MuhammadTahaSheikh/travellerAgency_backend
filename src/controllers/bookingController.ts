@@ -51,12 +51,13 @@ function canUserModifyBooking(role: string | undefined, bookingStatus: string): 
   if (isSuperAdmin(role)) return true;
   if (role === 'ADMIN') return true;
   if (bookingStatus === 'CONFIRMED' || bookingStatus === 'REQUEST_CONFIRMATION') return false;
+  if (bookingStatus === 'PARTIALLY_REFUNDED' || bookingStatus === 'REFUNDED') return false;
   return true;
 }
 
 function canUserEditBookingVendorCost(role: string | undefined, bookingStatus: string): boolean {
   if (isSuperAdmin(role) || role === 'ADMIN') return true;
-  return bookingStatus === 'CONFIRMED';
+  return bookingStatus === 'CONFIRMED' || bookingStatus === 'PARTIALLY_REFUNDED';
 }
 
 function canDirectConfirmBooking(role?: string) {

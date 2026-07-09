@@ -2,7 +2,6 @@ import prisma, { TX_OPTS } from '../config/database';
 import { Prisma, ServiceType } from '@prisma/client';
 import { createJournalEntry, reverseJournalEntry } from './ledgerService';
 import { createVendorAccount } from './vendorService';
-import { formatVendorDisplay } from '../utils/vendorDisplay';
 import { buildDetailedPostingDescription } from '../utils/postingDescription';
 
 type TxClient = Prisma.TransactionClient;
@@ -129,7 +128,7 @@ export async function accrueUnpostedCostToLedger(postingId: string, tx?: TxClien
         {
           accountId: cosAccount.id,
           debit: cost,
-          description: `${posting.serviceType}: ${posting.description}`,
+          description: posting.description,
           currency: payCurrency,
           exchangeRate: rate,
           amountPkr,
@@ -246,8 +245,6 @@ export async function postVendorCostToLedger(
     const estimatedAmt = await postingAmounts(estimated, payCurrency, rateArg);
     const actualAmt = await postingAmounts(cost, payCurrency, rateArg);
 
-    const vendorLabel = formatVendorDisplay(posting.vendor, posting.vendor.name);
-
     let entry;
     if (posting.unpostedJournalEntryId) {
       const unpostedAccount = await getOrCreateUnpostedVendorCostsAccount(client);
@@ -267,7 +264,7 @@ export async function postVendorCostToLedger(
           cost,
           payCurrency,
           actualAmt,
-          `Payable to ${vendorLabel}`
+          posting.description
         ),
       ];
 
@@ -323,7 +320,7 @@ export async function postVendorCostToLedger(
             cost,
             payCurrency,
             actualAmt,
-            `Payable to ${vendorLabel}`
+            posting.description
           ),
         ],
         { reference: posting.id },
@@ -537,8 +534,12 @@ export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx
           where: { id: posting.id },
           data: { ...data, description: spec.description },
         });
-        if (Number(posting.expectedCost) !== spec.expectedCost && posting.unpostedJournalEntryId) {
-          await resyncUnpostedAccrualForPosting(posting.id, client);
+        if (Number(posting.expectedCost) !== spec.expectedCost || posting.description !== spec.description) {
+          if (posting.unpostedJournalEntryId) {
+            await resyncUnpostedAccrualForPosting(posting.id, client);
+          } else if (posting.status === 'POSTED' && posting.journalEntryId && posting.description !== spec.description) {
+            await updatePostedVendorLedgerDescription(posting.id, spec.description, client);
+          }
         }
         updated.push(
           await client.vendorPosting.findUniqueOrThrow({
@@ -671,4 +672,152 @@ export async function getPendingVendorCosts() {
   const totalPending = postings.reduce((s, p) => s + Number(p.expectedCost), 0);
   const unpostedLedger = await getUnpostedCostsLedgerSummary();
   return { postings, totalPending, unpostedLedger };
+}
+
+/** Update vendor credit line on an already-posted journal entry to use the detailed posting description. */
+export async function updatePostedVendorLedgerDescription(
+  postingId: string,
+  description: string,
+  tx?: TxClient
+) {
+  const client = tx || prisma;
+  const posting = await client.vendorPosting.findUnique({ where: { id: postingId } });
+  if (!posting?.journalEntryId || !posting.vendorId) return;
+
+  const vendorAccount = await client.account.findFirst({ where: { vendorId: posting.vendorId } });
+  if (!vendorAccount) return;
+
+  await client.transaction.updateMany({
+    where: {
+      journalEntryId: posting.journalEntryId,
+      accountId: vendorAccount.id,
+      credit: { gt: 0 },
+    },
+    data: { description },
+  });
+
+  await client.journalEntry.update({
+    where: { id: posting.journalEntryId },
+    data: { description: `Vendor cost posted: ${description}` },
+  });
+
+  await client.vendorPosting.update({
+    where: { id: postingId },
+    data: { description },
+  });
+}
+
+function zipSpecsToPostings<T extends { serviceType: ServiceType; createdAt: Date }>(
+  specs: BookingPostingSpec[],
+  postings: T[]
+) {
+  const specQueues = new Map<ServiceType, BookingPostingSpec[]>();
+  for (const spec of specs) {
+    const list = specQueues.get(spec.serviceType) || [];
+    list.push(spec);
+    specQueues.set(spec.serviceType, list);
+  }
+
+  const postingQueues = new Map<ServiceType, T[]>();
+  for (const posting of [...postings].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())) {
+    const list = postingQueues.get(posting.serviceType) || [];
+    list.push(posting);
+    postingQueues.set(posting.serviceType, list);
+  }
+
+  const pairs: { spec: BookingPostingSpec; posting: T }[] = [];
+  for (const [serviceType, typeSpecs] of specQueues) {
+    const typePostings = postingQueues.get(serviceType) || [];
+    const count = Math.min(typeSpecs.length, typePostings.length);
+    for (let i = 0; i < count; i += 1) {
+      pairs.push({ spec: typeSpecs[i], posting: typePostings[i] });
+    }
+  }
+  return pairs;
+}
+
+/** Rebuild detailed posting descriptions from booking service items and refresh ledger lines. */
+export async function backfillVendorPostingDescriptions(bookingId?: string) {
+  const bookings = bookingId
+    ? await prisma.booking.findMany({
+        where: { id: bookingId },
+        include: { serviceItems: true, customer: true, vendorPostings: { orderBy: { createdAt: 'asc' } } },
+      })
+    : await prisma.booking.findMany({
+        where: { vendorPostings: { some: {} } },
+        include: { serviceItems: true, customer: true, vendorPostings: { orderBy: { createdAt: 'asc' } } },
+      });
+
+  let updated = 0;
+
+  for (const booking of bookings) {
+    await syncPendingVendorPostingsFromBooking(booking.id);
+
+    const context = bookingPostingContext(booking);
+    const specs = buildPostingSpecsFromServiceItems(booking.serviceItems as ServiceItemRow[], context);
+    const refreshedPostings = await prisma.vendorPosting.findMany({
+      where: { bookingId: booking.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    const pairs = zipSpecsToPostings(specs, refreshedPostings);
+
+    for (const { spec, posting } of pairs) {
+      if (spec.description === posting.description) continue;
+
+      await prisma.vendorPosting.update({
+        where: { id: posting.id },
+        data: { description: spec.description },
+      });
+
+      if (posting.unpostedJournalEntryId) {
+        await resyncUnpostedAccrualForPosting(posting.id);
+      } else if (posting.status === 'POSTED' && posting.journalEntryId) {
+        await updatePostedVendorLedgerDescription(posting.id, spec.description);
+      }
+
+      updated += 1;
+      console.log(`${booking.bookingNumber}: ${posting.serviceType} description refreshed`);
+    }
+  }
+
+  return updated;
+}
+
+/** Refresh ledger transaction descriptions from current posting descriptions (fixes stale journal lines). */
+export async function repairVendorLedgerDescriptions(bookingId?: string) {
+  const where = bookingId ? { bookingId } : {};
+  const postings = await prisma.vendorPosting.findMany({
+    where,
+    orderBy: { createdAt: 'asc' },
+  });
+
+  let repaired = 0;
+
+  for (const posting of postings) {
+    if (posting.unpostedJournalEntryId) {
+      await resyncUnpostedAccrualForPosting(posting.id);
+      repaired += 1;
+      continue;
+    }
+
+    if (posting.status === 'POSTED' && posting.journalEntryId && posting.vendorId) {
+      const vendorAccount = await prisma.account.findFirst({ where: { vendorId: posting.vendorId } });
+      if (!vendorAccount) continue;
+
+      const vendorLine = await prisma.transaction.findFirst({
+        where: {
+          journalEntryId: posting.journalEntryId,
+          accountId: vendorAccount.id,
+          credit: { gt: 0 },
+        },
+      });
+
+      if (vendorLine && vendorLine.description !== posting.description) {
+        await updatePostedVendorLedgerDescription(posting.id, posting.description);
+        repaired += 1;
+      }
+    }
+  }
+
+  return repaired;
 }
