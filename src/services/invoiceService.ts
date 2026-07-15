@@ -12,7 +12,7 @@ import {
   updateCustomerAccountLabel,
 } from './ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from './currencyService';
-import { logoHtml, BRAND_NAME, BRAND_TAGLINE } from './documentBrand';
+import { renderVoucherPatternHtml } from './voucherPatternTemplate';
 import { createVendorPostingsFromBooking } from './vendorPostingService';
 import {
   createVendorAccount,
@@ -239,62 +239,37 @@ export async function renderInvoiceHtml(invoiceId: string, baseUrl?: string) {
     where: { id: invoiceId },
     include: {
       customer: true,
-      booking: { include: { package: true, serviceItems: true } },
+      booking: {
+        include: {
+          package: true,
+          customer: true,
+          createdBy: { select: { id: true, firstName: true, lastName: true, phone: true } },
+          serviceItems: true,
+        },
+      },
       items: true,
     },
   });
 
   if (!invoice) throw new Error('Invoice not found');
 
-  const template = await getDefaultTemplate();
-  const itemRows = invoice.items
-    .map(
-      (i) =>
-        `<tr><td>${i.description}</td><td style="text-align:center">${i.quantity}</td><td style="text-align:right">${Number(i.unitPrice).toLocaleString()}</td><td style="text-align:right">${Number(i.amount).toLocaleString()}</td></tr>`
-    )
-    .join('');
-
   const billTo = invoice.customer?.customerType === 'B2B' && invoice.customer.companyName
-    ? `<strong>${invoice.customer.companyName}</strong>${invoice.customer.tradePartnerId ? `<br>Trade Partner: ${invoice.customer.tradePartnerId}` : ''}`
-    : `<strong>${invoice.customer?.firstName} ${invoice.customer?.lastName}</strong>`;
+    ? invoice.customer.companyName
+    : `${invoice.customer?.firstName || ''} ${invoice.customer?.lastName || ''}`.trim();
 
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Invoice ${invoice.invoiceNumber}</title>
-<style>
-  body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; color: #1e293b; }
-  .header { border-bottom: 2px solid #0d9488; padding-bottom: 16px; margin-bottom: 24px; }
-  table { width: 100%; border-collapse: collapse; margin: 24px 0; }
-  th, td { border: 1px solid #e2e8f0; padding: 10px; }
-  th { background: #f1f5f9; text-align: left; }
-  .totals { text-align: right; margin-top: 16px; }
-  .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; white-space: pre-line; color: #64748b; font-size: 14px; }
-</style></head><body>
-<div class="header">
-  <div style="margin-bottom:12px">${logoHtml(baseUrl, BRAND_NAME)}</div>
-  <strong style="font-size:18px;color:#0d9488">${BRAND_NAME}</strong><br>
-  <span style="color:#64748b">${BRAND_TAGLINE}</span>
-</div>
-<h2>INVOICE ${invoice.invoiceNumber}</h2>
-<p><strong>Bill To:</strong> ${billTo}<br>
-${invoice.customer?.phone || ''} ${invoice.customer?.email ? `| ${invoice.customer.email}` : ''}</p>
-<p><strong>Issue Date:</strong> ${new Date(invoice.issueDate).toLocaleDateString()}<br>
-<strong>Due Date:</strong> ${new Date(invoice.dueDate).toLocaleDateString()}<br>
-<strong>Status:</strong> ${invoice.status}</p>
-<table>
-  <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
-  <tbody>${itemRows}</tbody>
-</table>
-<div class="totals">
-  <p>Subtotal: ${Number(invoice.subtotal).toLocaleString()}</p>
-  ${Number(invoice.tax) > 0 ? `<p>Tax: ${Number(invoice.tax).toLocaleString()}</p>` : ''}
-  ${Number(invoice.discount) > 0 ? `<p>Discount: -${Number(invoice.discount).toLocaleString()}</p>` : ''}
-  <p><strong>Total: ${Number(invoice.totalAmount).toLocaleString()}</strong></p>
-  <p>Paid: ${Number(invoice.paidAmount).toLocaleString()}</p>
-  <p><strong>Outstanding: ${(Number(invoice.totalAmount) - Number(invoice.paidAmount)).toLocaleString()}</strong></p>
-</div>
-${template.terms ? `<p><strong>Terms:</strong> ${template.terms}</p>` : ''}
-<div class="footer">${template.footer}</div>
-</body></html>`;
+  return renderVoucherPatternHtml({
+    voucherNumber: invoice.invoiceNumber,
+    guestName: billTo,
+    issuedAt: invoice.issueDate,
+    remainingBalance: Number(invoice.totalAmount) - Number(invoice.paidAmount),
+    paymentStatus: invoice.status,
+    booking: invoice.booking,
+    invoice,
+  }, 'COMPLETE', {
+    title: 'INVOICE',
+    primaryLabel: 'Invoice No.',
+    showInvoiceMeta: false,
+  });
 }
 
 export async function allocateVendorCosts(bookingId: string, tx?: TxClient) {
