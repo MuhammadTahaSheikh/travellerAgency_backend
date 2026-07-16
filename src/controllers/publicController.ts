@@ -60,7 +60,8 @@ export async function getPublicCompany(_req: unknown, res: Response) {
 
 export async function getPublicInvoiceHtml(req: Request, res: Response) {
   try {
-    const shareToken = paramId(req);
+    // Route param is :shareToken (see publicRoutes), not :id.
+    const shareToken = paramId(req, 'shareToken');
     let invoice = await prisma.invoice.findUnique({
       where: { shareToken },
       select: { id: true },
@@ -89,7 +90,8 @@ export async function getPublicInvoiceHtml(req: Request, res: Response) {
 
 export async function getPublicVoucherHtml(req: Request, res: Response) {
   try {
-    const shareToken = paramId(req);
+    // Route param is :shareToken (see publicRoutes), not :id.
+    const shareToken = paramId(req, 'shareToken');
     let voucher = await prisma.voucher.findUnique({
       where: { shareToken },
       select: { id: true },
