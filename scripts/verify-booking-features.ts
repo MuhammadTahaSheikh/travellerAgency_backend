@@ -55,12 +55,25 @@ async function main() {
     }
   }
 
-  const bookingStatusEnum = await prisma.$queryRaw<Array<{ COLUMN_TYPE: string }>>`
-    SHOW COLUMNS FROM Booking WHERE Field = 'status'
-  `.catch(() => null);
-  if (bookingStatusEnum?.[0]?.COLUMN_TYPE?.includes('DRAFT')) ok('Booking.status includes DRAFT');
-  else fail('Booking.status enum', bookingStatusEnum?.[0]?.COLUMN_TYPE || 'unknown');
-  if (bookingStatusEnum?.[0]?.COLUMN_TYPE?.includes('REQUEST_CONFIRMATION')) ok('Booking.status includes REQUEST_CONFIRMATION');
+  const bookingStatusEnum = await prisma.$queryRaw<Array<{ enumlabel?: string; COLUMN_TYPE?: string }>>`
+    SELECT e.enumlabel
+    FROM pg_type t
+    JOIN pg_enum e ON t.oid = e.enumtypid
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'BookingStatus'
+    ORDER BY e.enumsortorder
+  `.catch(async () => {
+    // Fallback for MySQL environments still using SHOW COLUMNS.
+    return prisma.$queryRaw<Array<{ COLUMN_TYPE: string }>>`
+      SHOW COLUMNS FROM Booking WHERE Field = 'status'
+    `.catch(() => null as never);
+  });
+  const enumBlob = Array.isArray(bookingStatusEnum)
+    ? bookingStatusEnum.map((row) => row.enumlabel || row.COLUMN_TYPE || '').join(',')
+    : '';
+  if (enumBlob.includes('DRAFT')) ok('Booking.status includes DRAFT');
+  else fail('Booking.status enum', enumBlob || 'unknown');
+  if (enumBlob.includes('REQUEST_CONFIRMATION')) ok('Booking.status includes REQUEST_CONFIRMATION');
   else fail('REQUEST_CONFIRMATION in enum');
 
   console.log('\n=== 3. API routes (auth required = route exists) ===');
