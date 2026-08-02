@@ -1,5 +1,6 @@
 import prisma from '../config/database';
 import { escapeHtml } from '../utils/exportHelpers';
+import { BRAND_NAME, LOGO_ASSET_PATH, publicBaseUrl } from './documentBrand';
 
 type DetailMap = Record<string, unknown>;
 type VoucherFormatName = 'COMPLETE' | 'HOTEL' | 'TRANSPORT';
@@ -55,6 +56,7 @@ type PatternRenderOptions = {
   title?: string;
   primaryLabel?: string;
   showInvoiceMeta?: boolean;
+  baseUrl?: string;
 };
 
 const SERVICE_ORDER = ['TICKET', 'VISA', 'HOTEL', 'TRANSPORT'] as const;
@@ -69,6 +71,18 @@ const COLORS = {
   text: '#183153',
 };
 
+const FOOTER_ADDRESS = '243-TIP Link Main Boulevard, Khayaban-e-Amin Near Defence Road, Lahore';
+const FOOTER_PHONES = ['+92-333-6425794', '+92-316-6426500'];
+const FOOTER_WEBSITE = 'www.huffazholiday.com';
+const FOOTER_EMAIL = 'huffazholiday@gmail.com';
+
+const IMPORTANT_NOTES_UR = [
+  'براہ کرم تمام نام، تاریخیں اور ریزرویشن کی تفصیلات کی تصدیق کر لیں۔',
+  'سفر کے دوران درست شناختی دستاویزات اور پاسپورٹ ساتھ رکھیں۔',
+  'ہوٹل اور ٹرانسپورٹ کے اوقات سپلائر کنفرمیشن کے مطابق ہوں گے۔',
+  'تبدیلی اور کینسلیشن پر لاگو چارجز لاگو ہوں گے۔',
+];
+
 function text(value: unknown): string {
   return value == null ? '' : String(value);
 }
@@ -80,6 +94,10 @@ function number(value: unknown): number {
 
 function money(value: unknown, currency = 'PKR'): string {
   return `${number(value).toLocaleString('en-PK', { maximumFractionDigits: 2 })} ${escapeHtml(currency)}`;
+}
+
+function moneySummary(value: unknown): string {
+  return `${number(value).toLocaleString('en-PK', { maximumFractionDigits: 0 })}/-`;
 }
 
 function formatDate(value?: string | Date | null): string {
@@ -115,16 +133,16 @@ function servicePrice(
 }
 
 function dataTable(headers: string[], body: string, headerBg: string): string {
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;table-layout:fixed;">
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;table-layout:fixed;border-radius:6px;overflow:hidden;">
     <thead><tr>${headers.map((header) =>
-      `<th style="background:${headerBg};color:#fff;font-size:7px;padding:5px 3px;text-align:center;border:1px solid ${headerBg};">${escapeHtml(header)}</th>`
+      `<th style="background:${headerBg};color:#fff;font-size:7px;padding:5px 3px;text-align:center;border:1px solid ${headerBg};font-weight:700;">${escapeHtml(header)}</th>`
     ).join('')}</tr></thead>
     <tbody>${body}</tbody>
   </table>`;
 }
 
 function emptyRow(columns: number): string {
-  return `<tr><td colspan="${columns}" style="border:1px solid ${COLORS.line};padding:8px;text-align:center;color:#94a3b8;font-size:8px;">No details available</td></tr>`;
+  return `<tr><td colspan="${columns}" style="border:1px solid ${COLORS.line};padding:8px;text-align:center;color:#94a3b8;font-size:8px;">—</td></tr>`;
 }
 
 function cells(values: string[]): string {
@@ -133,12 +151,22 @@ function cells(values: string[]): string {
     .join('');
 }
 
-function serviceBlock(num: string, title: string, accent: string, tableHtml: string): string {
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:8px 0;border:1px solid ${COLORS.line};">
+function serviceIcon(type: string): string {
+  const icons: Record<string, string> = {
+    TICKET: '✈',
+    VISA: '🛂',
+    HOTEL: '🏨',
+    TRANSPORT: '🚐',
+  };
+  return icons[type] || '◆';
+}
+
+function serviceBlock(num: string, title: string, accent: string, tableHtml: string, type: string): string {
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:8px 0;border:1px solid ${COLORS.line};border-radius:10px;overflow:hidden;">
     <tr>
-      <td width="42" valign="middle" style="width:42px;background:${accent};color:#fff;font-size:18px;font-weight:800;text-align:center;padding:8px 4px;">${num}</td>
-      <td style="padding:6px 8px;">
-        <div style="color:${accent};font-size:9px;font-weight:800;text-transform:uppercase;margin-bottom:4px;">${escapeHtml(title)}</div>
+      <td width="42" valign="middle" style="width:42px;background:${accent};color:#fff;font-size:20px;font-weight:800;text-align:center;padding:10px 4px;line-height:1.1;">${num}</td>
+      <td style="padding:8px 10px;background:#fff;">
+        <div style="color:${accent};font-size:9px;font-weight:800;text-transform:uppercase;margin-bottom:5px;">${serviceIcon(type)} ${escapeHtml(title)}</div>
         ${tableHtml}
       </td>
     </tr>
@@ -170,7 +198,7 @@ function renderTicket(
       return `<tr>${cells(values)}</tr>`;
     });
   }).join('');
-  return serviceBlock(num, 'Ticket Details', COLORS.blue, dataTable(headers, body || emptyRow(headers.length), COLORS.navy));
+  return serviceBlock(num, 'Ticket Details', COLORS.navy, dataTable(headers, body || emptyRow(headers.length), COLORS.navy), 'TICKET');
 }
 
 function renderVisa(
@@ -193,7 +221,7 @@ function renderVisa(
     if (showPrice) values.push(money(servicePrice(item, details), currency));
     return `<tr>${cells(values)}</tr>`;
   }).join('');
-  return serviceBlock(num, 'Visa Details', COLORS.visa, dataTable(headers, body || emptyRow(headers.length), COLORS.visa));
+  return serviceBlock(num, 'Visa Details', COLORS.visa, dataTable(headers, body || emptyRow(headers.length), COLORS.visa), 'VISA');
 }
 
 function renderHotel(
@@ -202,8 +230,8 @@ function renderHotel(
   currency: string,
   num: string
 ): string {
-  const headers = ['Hotel Name', 'City', 'Nights', 'Check-in', 'Check-out', 'Room Type', 'Meal Plan', 'Qty', 'Res #'];
-  if (showPrice) headers.push(`Total (${currency})`);
+  const headers = ['Hotel Name', 'City', 'Nights', 'Check-in', 'Check-out', 'Room Type', 'Meal Plan', 'Qty'];
+  if (showPrice) headers.push('Rate Per Night (SR)', `Total (${currency})`);
   const body = (items || []).flatMap((item) => {
     const details = (item.details as DetailMap | null) || {};
     return rowsOf(details).map((row) => {
@@ -218,16 +246,17 @@ function renderHotel(
         text(row.roomType || details.roomType) || '—',
         text(row.mealPlan || details.mealPlan) || '—',
         String(rooms),
-        text(row.vendorResNo || details.vendorResNo) || '—',
       ];
       if (showPrice) {
-        const rowTotal = number(row.salePerNight) * nights * rooms;
+        const ratePerNight = number(row.salePerNight);
+        const rowTotal = ratePerNight * nights * rooms;
+        values.push(ratePerNight ? money(ratePerNight, 'SR') : '—');
         values.push(money(rowTotal || servicePrice(item, details), currency));
       }
       return `<tr>${cells(values)}</tr>`;
     });
   }).join('');
-  return serviceBlock(num, 'Hotel Details', COLORS.navy, dataTable(headers, body || emptyRow(headers.length), COLORS.navy));
+  return serviceBlock(num, 'Hotel Details', COLORS.navy, dataTable(headers, body || emptyRow(headers.length), COLORS.navy), 'HOTEL');
 }
 
 function renderTransport(
@@ -236,7 +265,7 @@ function renderTransport(
   currency: string,
   num: string
 ): string {
-  const headers = ['Service Type', 'From', 'To', 'Date', 'Vehicle Type', 'Qty', 'Res #'];
+  const headers = ['Service Type', 'From', 'To', 'Date', 'Vehicle Type', 'Qty'];
   if (showPrice) headers.push(`Price (${currency})`);
   const body = (items || []).flatMap((item) => {
     const details = (item.details as DetailMap | null) || {};
@@ -249,13 +278,12 @@ function renderTransport(
         formatDate(text(row.date || details.date || details.transportDate)),
         text(row.vehicleType || details.vehicleType) || '—',
         text(row.quantity || details.quantity) || '1',
-        text(row.vendorResNo || details.vendorResNo) || '—',
       ];
       if (showPrice) values.push(money(number(row.sale) || servicePrice(item, details), currency));
       return `<tr>${cells(values)}</tr>`;
     });
   }).join('');
-  return serviceBlock(num, 'Transport Details', COLORS.transport, dataTable(headers, body || emptyRow(headers.length), COLORS.transport));
+  return serviceBlock(num, 'Transport Details', COLORS.transport, dataTable(headers, body || emptyRow(headers.length), COLORS.transport), 'TRANSPORT');
 }
 
 async function staffCode(userId?: string): Promise<string> {
@@ -271,53 +299,110 @@ function pricingSummary(voucher: PatternVoucher, showBreakdown: boolean, currenc
   const paid = number(voucher.invoice?.paidAmount);
   const balance = Math.max(0, total - paid);
 
-  const rows = showBreakdown
+  const rows: Array<[string, string, boolean]> = showBreakdown
     ? [
-        ['Total Package Amount', money(total, currency)],
-        ['Advance Paid', money(paid, currency)],
-        ['Balance Amount', money(balance, currency)],
+        ['Total Package Amount', moneySummary(total), false],
+        ['Advance Paid', moneySummary(paid), false],
+        ['Balance Amount', moneySummary(balance), true],
       ]
     : [
         ...[
-          { label: 'Price / Adult', count: booking?.adults || 0, price: booking?.priceAdult },
-          { label: 'Price / Child', count: booking?.children || 0, price: booking?.priceChild },
-          { label: 'Price / Infant', count: booking?.infants || 0, price: booking?.priceInfant },
+          { label: 'Price per Adult', count: booking?.adults || 0, price: booking?.priceAdult },
+          { label: 'Price per Child', count: booking?.children || 0, price: booking?.priceChild },
+          { label: 'Price per Infant', count: booking?.infants || 0, price: booking?.priceInfant },
         ]
           .filter((row) => row.count > 0)
-          .map((row) => [`${row.label} (${row.count})`, money(row.price, currency)] as [string, string]),
-        ['Advance Paid', money(paid, currency)],
-        ['Balance Amount', money(balance, currency)],
+          .map((row) => [`${row.label}`, moneySummary(row.price), false] as [string, string, boolean]),
+        ['Advance Paid', moneySummary(paid), false],
+        ['Balance Amount', moneySummary(balance), true],
       ];
 
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};">
-    <tr><td colspan="2" style="background:${COLORS.navy};color:#fff;text-align:center;padding:6px;font-size:9px;font-weight:800;text-transform:uppercase;">Price Summary</td></tr>
-    ${rows.map(([label, value]) =>
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:8px;overflow:hidden;">
+    <tr><td colspan="3" style="background:${COLORS.navy};color:#fff;text-align:center;padding:6px;font-size:9px;font-weight:800;text-transform:uppercase;">Price Summary</td></tr>
+    ${rows.map(([label, value, highlight]) =>
       `<tr>
-        <td style="border-top:1px solid ${COLORS.line};padding:6px 8px;font-size:8px;color:#475569;">${escapeHtml(label)}</td>
-        <td style="border-top:1px solid ${COLORS.line};padding:6px 8px;font-size:8px;text-align:right;font-weight:700;color:${label === 'Balance Amount' && balance > 0 ? '#dc2626' : COLORS.text};">${value}</td>
+        <td style="border-top:1px solid ${COLORS.line};padding:6px 8px;font-size:8px;color:#475569;width:52%;">${escapeHtml(label)}</td>
+        <td style="border-top:1px solid ${COLORS.line};padding:6px 8px;font-size:8px;text-align:center;color:#64748b;width:14%;">${escapeHtml(currency)}</td>
+        <td style="border-top:1px solid ${COLORS.line};padding:6px 8px;font-size:8px;text-align:right;font-weight:700;color:${highlight ? '#dc2626' : COLORS.text};width:34%;">${value}</td>
       </tr>`
     ).join('')}
     <tr>
       <td style="background:${COLORS.navy};color:#fff;padding:7px 8px;font-size:8px;font-weight:800;">Total Amount Payable</td>
-      <td style="background:${COLORS.navy};color:#fff;padding:7px 8px;font-size:8px;font-weight:800;text-align:right;">${money(total, currency)}</td>
+      <td style="background:${COLORS.navy};color:#fff;padding:7px 8px;font-size:8px;font-weight:800;text-align:center;">${escapeHtml(currency)}</td>
+      <td style="background:${COLORS.navy};color:#fff;padding:7px 8px;font-size:8px;font-weight:800;text-align:right;">${moneySummary(total)}</td>
     </tr>
   </table>`;
 }
 
 function packageIncludes(included: Set<string>): string {
-  const items = SERVICE_ORDER.map((type) => {
+  const items = SERVICE_ORDER.map((type, index) => {
     const active = included.has(type);
     const accent = type === 'VISA' ? COLORS.visa : type === 'TRANSPORT' ? COLORS.transport : COLORS.blue;
-    const icon = type === 'TICKET' ? '✈' : type === 'HOTEL' ? '⌂' : '◆';
-    return `<td width="25%" align="center" style="width:25%;padding:8px 4px;text-align:center;position:relative;">
-      <div style="display:inline-block;width:24px;height:24px;line-height:24px;border-radius:50%;background:${active ? accent : '#d5dbe1'};color:#fff;font-size:11px;margin-bottom:4px;">${icon}</div>
+    const divider = index < SERVICE_ORDER.length - 1 ? `border-right:1px solid ${COLORS.line};` : '';
+    return `<td width="25%" align="center" style="width:25%;padding:10px 4px;text-align:center;${divider}">
+      <div style="display:inline-block;width:28px;height:28px;line-height:28px;border-radius:50%;background:${active ? accent : '#d5dbe1'};color:#fff;font-size:12px;margin-bottom:4px;">${serviceIcon(type)}</div>
       <div style="font-size:8px;font-weight:800;text-transform:uppercase;color:${active ? accent : COLORS.muted};">${type}</div>
-      ${active ? '' : `<div style="color:#dc2626;font-size:16px;font-weight:900;line-height:1;">×</div>`}
+      ${active ? '' : `<div style="color:#dc2626;font-size:16px;font-weight:900;line-height:1;margin-top:2px;">×</div>`}
     </td>`;
   }).join('');
 
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};margin-bottom:8px;">
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:10px;margin-bottom:8px;overflow:hidden;">
+    <tr><td colspan="4" style="text-align:center;font-size:8px;font-weight:800;text-transform:uppercase;color:${COLORS.navy};padding:6px 8px 0;">Package Includes</td></tr>
     <tr>${items}</tr>
+  </table>`;
+}
+
+function servicesIncludedBanner(included: Set<string>): string {
+  if (included.size < 2) return '';
+  const list = SERVICE_ORDER.filter((type) => included.has(type)).join(' + ');
+  return `<div style="background:${COLORS.blue};color:#fff;text-align:center;padding:5px 10px;border-radius:999px;font-size:8px;font-weight:700;margin:0 0 8px;">${included.size} Services Included (${list})</div>`;
+}
+
+function passengerDetails(adults: number, children: number, infants: number): string {
+  const row = (icon: string, label: string, count: number) =>
+    `<tr>
+      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;width:24px;">${icon}</td>
+      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;">${label}</td>
+      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;text-align:center;font-weight:700;width:36px;">${count}</td>
+    </tr>`;
+
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:8px;overflow:hidden;">
+    <tr><td colspan="3" style="background:${COLORS.navy};color:#fff;text-align:center;padding:5px;font-size:8px;font-weight:800;text-transform:uppercase;">Passenger Details</td></tr>
+    ${row('👤', 'Adults', adults)}
+    ${row('🧒', 'Children', children)}
+    ${row('👶', 'Infants', infants)}
+  </table>`;
+}
+
+function brandHeader(baseUrl?: string): string {
+  const logoSrc = baseUrl ? `${publicBaseUrl(baseUrl)}${LOGO_ASSET_PATH}` : '';
+  const logoBlock = logoSrc
+    ? `<img src="${logoSrc}" alt="${escapeHtml(BRAND_NAME)}" style="max-height:54px;max-width:190px;object-fit:contain;display:block;" />`
+    : `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+        <tr>
+          <td style="border:3px solid ${COLORS.blue};color:${COLORS.blue};font-size:20px;font-weight:900;padding:2px 6px;line-height:1;">HH</td>
+          <td style="padding-left:8px;color:${COLORS.blue};font-size:15px;font-weight:900;line-height:1.05;">
+            HUFFAZ<br><span style="font-size:8px;letter-spacing:2px;">HOLIDAY</span>
+          </td>
+        </tr>
+      </table>`;
+
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+    <tr>
+      <td width="30%" valign="top" style="width:30%;vertical-align:top;">
+        ${logoBlock}
+        <div style="color:#5682ad;font-size:7px;margin-top:5px;">Your Journey, Our Priority</div>
+      </td>
+      <td width="36%" align="center" valign="middle" style="width:36%;text-align:center;vertical-align:middle;">
+        <div style="font-family:Georgia, serif;font-size:24px;font-weight:700;color:${COLORS.navy};letter-spacing:1px;">{{TITLE}}</div>
+        <div style="margin:6px auto 0;width:84px;border-top:2px solid ${COLORS.navy};position:relative;text-align:center;">
+          <span style="display:inline-block;margin-top:-9px;background:#fff;padding:0 4px;color:${COLORS.blue};font-size:11px;">✈</span>
+        </div>
+      </td>
+      <td width="34%" valign="top" style="width:34%;vertical-align:top;font-size:8px;">
+        {{META}}
+      </td>
+    </tr>
   </table>`;
 }
 
@@ -358,6 +443,21 @@ export async function renderVoucherPatternHtml(
   const children = booking?.children || 0;
   const infants = booking?.infants || 0;
   const issueDate = formatDate(voucher.issuedAt || voucher.invoice?.issueDate || new Date());
+  const invoiceDate = formatDate(voucher.invoice?.issueDate || voucher.issuedAt || new Date());
+
+  const metaRows = [
+    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;width:78px;">${escapeHtml(options.primaryLabel || 'Voucher No.')}</td><td style="padding:2px 0;">${escapeHtml(voucher.voucherNumber)}</td></tr>`,
+    options.showInvoiceMeta !== false && voucher.invoice?.invoiceNumber
+      ? `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Invoice No.</td><td style="padding:2px 0;">${escapeHtml(voucher.invoice.invoiceNumber)}</td></tr>`
+      : '',
+    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Date</td><td style="padding:2px 0;">${invoiceDate}</td></tr>`,
+    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Booking Ref.</td><td style="padding:2px 0;">${escapeHtml(booking?.bookingNumber || '—')}</td></tr>`,
+    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Issue Date</td><td style="padding:2px 0;">${issueDate}</td></tr>`,
+  ].join('');
+
+  const headerHtml = brandHeader(options.baseUrl)
+    .replace('{{TITLE}}', escapeHtml(title))
+    .replace('{{META}}', `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">${metaRows}</table>`);
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(voucher.voucherNumber)}</title>
@@ -369,75 +469,41 @@ export async function renderVoucherPatternHtml(
 </style>
 </head>
 <body>
-<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;border:1px solid ${COLORS.line};">
+<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;border:1px solid ${COLORS.line};border-radius:12px;overflow:hidden;">
   <tr>
     <td style="padding:14px 16px 10px;">
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
-        <tr>
-          <td width="28%" valign="top" style="width:28%;vertical-align:top;">
-            <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-              <tr>
-                <td style="border:3px solid ${COLORS.blue};color:${COLORS.blue};font-size:20px;font-weight:900;padding:2px 6px;line-height:1;">HH</td>
-                <td style="padding-left:8px;color:${COLORS.blue};font-size:15px;font-weight:900;line-height:1.05;">
-                  HUFFAZ<br><span style="font-size:8px;letter-spacing:2px;">HOLIDAY</span>
-                </td>
-              </tr>
-            </table>
-            <div style="color:#5682ad;font-size:7px;margin-top:5px;">Your Journey, Our Priority</div>
-          </td>
-          <td width="36%" align="center" valign="middle" style="width:36%;text-align:center;vertical-align:middle;">
-            <div style="font-family:Georgia, serif;font-size:24px;font-weight:700;color:${COLORS.navy};letter-spacing:1px;">${escapeHtml(title)}</div>
-            <div style="width:70px;border-top:2px solid ${COLORS.navy};margin:6px auto 0;position:relative;"></div>
-          </td>
-          <td width="36%" valign="top" style="width:36%;vertical-align:top;font-size:8px;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
-              <tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;width:78px;">${escapeHtml(options.primaryLabel || 'Voucher No.')}</td><td style="padding:2px 0;">${escapeHtml(voucher.voucherNumber)}</td></tr>
-              ${options.showInvoiceMeta === false ? '' : `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Invoice No.</td><td style="padding:2px 0;">${escapeHtml(voucher.invoice?.invoiceNumber || '—')}</td></tr>`}
-              <tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Booking Ref.</td><td style="padding:2px 0;">${escapeHtml(booking?.bookingNumber || '—')}</td></tr>
-              <tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Issue Date</td><td style="padding:2px 0;">${issueDate}</td></tr>
-            </table>
-          </td>
-        </tr>
-      </table>
+      ${headerHtml}
 
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:12px;">
         <tr>
           <td width="68%" valign="bottom" style="width:68%;vertical-align:bottom;line-height:1.55;color:#334155;padding-right:16px;">
             <strong style="font-size:11px;">Dear ${escapeHtml(guestName)},</strong><br>
-            Thank you for choosing Huffaz Holiday.<br>
-            Please find below the details of your travel arrangements.
+            Thank you for choosing ${escapeHtml(BRAND_NAME)}.<br>
+            Please find below the details of your Umrah package.
           </td>
           <td width="32%" valign="top" style="width:32%;vertical-align:top;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};">
-              <tr><td colspan="2" style="background:${COLORS.navy};color:#fff;text-align:center;padding:5px;font-size:8px;font-weight:800;text-transform:uppercase;">Passenger Details</td></tr>
-              <tr><td style="border-top:1px solid ${COLORS.line};padding:4px 8px;font-size:8px;">Adults</td><td style="border-top:1px solid ${COLORS.line};padding:4px 8px;font-size:8px;text-align:center;font-weight:700;">${adults}</td></tr>
-              <tr><td style="border-top:1px solid ${COLORS.line};padding:4px 8px;font-size:8px;">Children</td><td style="border-top:1px solid ${COLORS.line};padding:4px 8px;font-size:8px;text-align:center;font-weight:700;">${children}</td></tr>
-              <tr><td style="border-top:1px solid ${COLORS.line};padding:4px 8px;font-size:8px;">Infants</td><td style="border-top:1px solid ${COLORS.line};padding:4px 8px;font-size:8px;text-align:center;font-weight:700;">${infants}</td></tr>
-            </table>
+            ${passengerDetails(adults, children, infants)}
           </td>
         </tr>
       </table>
 
-      <div style="text-align:center;font-size:11px;font-weight:800;text-transform:uppercase;color:#1f2937;margin:12px 0 6px;">Package Includes</div>
+      ${servicesIncludedBanner(includedTypes)}
       ${packageIncludes(includedTypes)}
       ${sections}
 
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:8px;">
         <tr>
           <td width="50%" valign="top" style="width:50%;vertical-align:top;padding-right:8px;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};min-height:120px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:8px;min-height:120px;">
               <tr><td style="padding:8px 10px;">
                 <div style="color:${COLORS.navy};font-size:8px;font-weight:800;text-transform:uppercase;margin-bottom:5px;">Important Notes</div>
-                <ul style="margin:0;padding-left:14px;color:#475569;font-size:8px;line-height:1.5;">
-                  <li>Please verify all names, dates and reservation details.</li>
-                  <li>Carry valid travel documents and identification.</li>
-                  <li>Hotel and transport timings are subject to supplier confirmation.</li>
-                  <li>Changes and cancellations are subject to applicable charges.</li>
+                <ul style="margin:0;padding-left:14px;color:#475569;font-size:8px;line-height:1.55;direction:rtl;text-align:right;">
+                  ${IMPORTANT_NOTES_UR.map((note) => `<li style="margin-bottom:4px;">${escapeHtml(note)}</li>`).join('')}
                 </ul>
-                ${booking?.notes ? `<div style="margin-top:6px;font-size:8px;"><b>Booking note:</b> ${escapeHtml(booking.notes)}</div>` : ''}
-                <div style="margin-top:8px;font-size:7px;color:#64748b;">
-                  Reservation given by
-                  <span style="font-family:'Brush Script MT',cursive;color:#355b89;font-size:14px;margin-left:4px;">${escapeHtml(staffName || 'Huffaz Holiday')}</span>
+                ${booking?.notes ? `<div style="margin-top:6px;font-size:8px;direction:ltr;text-align:left;"><b>Booking note:</b> ${escapeHtml(booking.notes)}</div>` : ''}
+                <div style="margin-top:10px;padding-top:8px;border-top:1px solid ${COLORS.line};font-size:8px;color:${COLORS.navy};">
+                  Quotation Given By:
+                  <span style="font-family:'Brush Script MT',cursive;color:#355b89;font-size:16px;margin-left:6px;">${escapeHtml(staffName || BRAND_NAME)}</span>
                 </div>
               </td></tr>
             </table>
@@ -450,15 +516,25 @@ export async function renderVoucherPatternHtml(
 
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:12px;">
         <tr>
-          <td width="48%" valign="bottom" style="width:48%;vertical-align:bottom;font-size:8px;color:#64748b;">
-            Chairman Huffaz Holiday<br>
+          <td width="34%" valign="bottom" style="width:34%;vertical-align:bottom;font-size:8px;color:#64748b;">
+            Chairman ${escapeHtml(BRAND_NAME)}<br>
             <span style="display:inline-block;margin-top:3px;color:#31567d;font-size:10px;font-weight:700;">Allama Ibtisam Elahi Zaheer</span>
           </td>
-          <td width="52%" align="right" valign="bottom" style="width:52%;text-align:right;vertical-align:bottom;">
-            <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:2px solid ${COLORS.navy};display:inline-block;text-align:center;">
+          <td width="33%" valign="bottom" style="width:33%;vertical-align:bottom;font-size:8px;color:#64748b;padding:0 8px;">
+            📍 ${escapeHtml(FOOTER_ADDRESS)}
+          </td>
+          <td width="33%" align="right" valign="bottom" style="width:33%;text-align:right;vertical-align:bottom;font-size:8px;color:#64748b;">
+            ${FOOTER_PHONES.map((phone) => `📞 ${escapeHtml(phone)}`).join('<br>')}
+            <br>🌐 ${escapeHtml(FOOTER_WEBSITE)}
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2"></td>
+          <td align="right" valign="bottom" style="text-align:right;vertical-align:bottom;padding-top:8px;">
+            <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:2px solid ${COLORS.navy};display:inline-block;text-align:center;border-radius:8px;">
               <tr><td style="padding:8px 12px;line-height:1.45;">
                 <div style="color:${COLORS.navy};font-size:12px;font-weight:700;">Thanks &amp; Regards</div>
-                <div style="font-size:12px;font-weight:800;margin-top:2px;">${escapeHtml(code)} - ${escapeHtml((staffName || 'HUFFAZ HOLIDAY').toUpperCase())}</div>
+                <div style="font-size:12px;font-weight:800;margin-top:2px;">${escapeHtml(code)} - ${escapeHtml((staffName || BRAND_NAME).toUpperCase())}</div>
                 ${staff?.phone ? `<div style="font-size:9px;margin-top:2px;"><span style="color:${COLORS.navy};font-weight:700;">Phone:</span> ${escapeHtml(staff.phone)}</div>` : ''}
                 <div style="font-size:9px;margin-top:2px;"><span style="color:${COLORS.navy};font-weight:700;">Reservation Print Date:</span> ${formatDate(new Date())}</div>
               </td></tr>
@@ -468,7 +544,7 @@ export async function renderVoucherPatternHtml(
       </table>
 
       <div style="border-top:2px solid ${COLORS.navy};margin-top:10px;padding-top:6px;font-size:7px;color:#335b82;text-align:center;">
-        243 TIP, Main Boulevard Near Defence Road, Lahore &nbsp;|&nbsp; +92-320-7000721 &nbsp;|&nbsp; huffazholiday@gmail.com &nbsp;|&nbsp; www.huffazholiday.com
+        ${escapeHtml(FOOTER_ADDRESS)} &nbsp;|&nbsp; ${FOOTER_PHONES.join(' &nbsp;|&nbsp; ')} &nbsp;|&nbsp; ${escapeHtml(FOOTER_EMAIL)} &nbsp;|&nbsp; ${escapeHtml(FOOTER_WEBSITE)}
       </div>
     </td>
   </tr>

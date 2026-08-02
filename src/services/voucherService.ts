@@ -183,7 +183,7 @@ export async function renderVoucherHtml(voucherId: string, format?: VoucherForma
 
   if (!voucher) throw new Error('Voucher not found');
   const fmt = format || voucher.voucherFormat;
-  return renderVoucherPatternHtml(voucher, fmt);
+  return renderVoucherPatternHtml(voucher, fmt, { baseUrl });
 }
 
 export async function markVoucherShared(voucherId: string) {

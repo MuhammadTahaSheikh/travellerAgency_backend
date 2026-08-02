@@ -269,6 +269,7 @@ export async function renderInvoiceHtml(invoiceId: string, baseUrl?: string) {
     title: 'INVOICE',
     primaryLabel: 'Invoice No.',
     showInvoiceMeta: false,
+    baseUrl,
   });
 }
 
