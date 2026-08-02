@@ -179,10 +179,11 @@ export async function getBooking(req: AuthRequest, res: Response) {
     booking.vendorPostings.length === 0;
 
   if (needsPostings) {
+    const bookingId = booking.id;
     try {
-      await createVendorPostingsFromBooking(booking.id);
+      await createVendorPostingsFromBooking(bookingId);
       booking = await prisma.booking.findUnique({
-        where: { id: booking.id },
+        where: { id: bookingId },
         include: {
           customer: true,
           package: { include: { destinations: true } },
@@ -198,7 +199,7 @@ export async function getBooking(req: AuthRequest, res: Response) {
       });
       if (!booking) return res.status(404).json({ success: false, error: 'Booking not found' });
     } catch (err) {
-      console.error('Failed to ensure vendor postings for booking', booking.id, err);
+      console.error('Failed to ensure vendor postings for booking', bookingId, err);
     }
   }
 
