@@ -1,6 +1,6 @@
-import prisma from '../config/database';
 import { escapeHtml } from '../utils/exportHelpers';
-import { BRAND_NAME, LOGO_ASSET_PATH, publicBaseUrl } from './documentBrand';
+import { BRAND_NAME } from './documentBrand';
+import { flightPathGraphic, getLogoDataUri, icons, sectionIcon, serviceIcon, BLUE as ICON_BLUE } from './invoicePatternIcons';
 
 type DetailMap = Record<string, unknown>;
 type VoucherFormatName = 'COMPLETE' | 'HOTEL' | 'TRANSPORT';
@@ -72,9 +72,8 @@ const COLORS = {
 };
 
 const FOOTER_ADDRESS = '243-TIP Link Main Boulevard, Khayaban-e-Amin Near Defence Road, Lahore';
-const FOOTER_PHONES = ['+92-333-6425794', '+92-316-6426500'];
+const FOOTER_PHONES = ['+92-320-4455954', '+92-316-6666661'];
 const FOOTER_WEBSITE = 'www.huffazholiday.com';
-const FOOTER_EMAIL = 'huffazholiday@gmail.com';
 
 const IMPORTANT_NOTES_UR = [
   'براہ کرم تمام نام، تاریخیں اور ریزرویشن کی تفصیلات کی تصدیق کر لیں۔',
@@ -151,22 +150,16 @@ function cells(values: string[]): string {
     .join('');
 }
 
-function serviceIcon(type: string): string {
-  const icons: Record<string, string> = {
-    TICKET: '✈',
-    VISA: '🛂',
-    HOTEL: '🏨',
-    TRANSPORT: '🚐',
-  };
-  return icons[type] || '◆';
-}
-
 function serviceBlock(num: string, title: string, accent: string, tableHtml: string, type: string): string {
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:8px 0;border:1px solid ${COLORS.line};border-radius:10px;overflow:hidden;">
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:10px 0;border:1px solid ${COLORS.line};border-radius:8px;overflow:hidden;">
     <tr>
-      <td width="42" valign="middle" style="width:42px;background:${accent};color:#fff;font-size:20px;font-weight:800;text-align:center;padding:10px 4px;line-height:1.1;">${num}</td>
-      <td style="padding:8px 10px;background:#fff;">
-        <div style="color:${accent};font-size:9px;font-weight:800;text-transform:uppercase;margin-bottom:5px;">${serviceIcon(type)} ${escapeHtml(title)}</div>
+      <td width="46" valign="top" style="width:46px;background:${accent};padding:10px 6px;vertical-align:top;">
+        <div style="background:#fff;color:${accent};font-size:14px;font-weight:800;text-align:center;padding:5px 2px;line-height:1;border-radius:2px;">${num}</div>
+      </td>
+      <td style="padding:8px 10px 10px;background:#fff;">
+        <div style="color:${accent};font-size:9px;font-weight:800;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+          ${sectionIcon(type, accent)} ${escapeHtml(title)}
+        </div>
         ${tableHtml}
       </td>
     </tr>
@@ -286,13 +279,6 @@ function renderTransport(
   return serviceBlock(num, 'Transport Details', COLORS.transport, dataTable(headers, body || emptyRow(headers.length), COLORS.transport), 'TRANSPORT');
 }
 
-async function staffCode(userId?: string): Promise<string> {
-  if (!userId) return '01 HHH';
-  const users = await prisma.user.findMany({ orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true } });
-  const index = users.findIndex((user) => user.id === userId);
-  return `${String(index >= 0 ? index + 1 : 1).padStart(2, '0')} HHH`;
-}
-
 function pricingSummary(voucher: PatternVoucher, showBreakdown: boolean, currency: string): string {
   const booking = voucher.booking;
   const total = number(voucher.invoice?.totalAmount ?? booking?.totalAmount);
@@ -339,49 +325,50 @@ function packageIncludes(included: Set<string>): string {
     const active = included.has(type);
     const accent = type === 'VISA' ? COLORS.visa : type === 'TRANSPORT' ? COLORS.transport : COLORS.blue;
     const divider = index < SERVICE_ORDER.length - 1 ? `border-right:1px solid ${COLORS.line};` : '';
-    return `<td width="25%" align="center" style="width:25%;padding:10px 4px;text-align:center;${divider}">
-      <div style="display:inline-block;width:28px;height:28px;line-height:28px;border-radius:50%;background:${active ? accent : '#d5dbe1'};color:#fff;font-size:12px;margin-bottom:4px;">${serviceIcon(type)}</div>
-      <div style="font-size:8px;font-weight:800;text-transform:uppercase;color:${active ? accent : COLORS.muted};">${type}</div>
-      ${active ? '' : `<div style="color:#dc2626;font-size:16px;font-weight:900;line-height:1;margin-top:2px;">×</div>`}
+    return `<td width="25%" align="center" style="width:25%;padding:12px 4px 10px;text-align:center;${divider}">
+      ${serviceIcon(type, active, accent)}
+      <div style="font-size:8px;font-weight:800;text-transform:uppercase;color:${active ? accent : COLORS.muted};margin-top:5px;">${type}</div>
     </td>`;
   }).join('');
 
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:10px;margin-bottom:8px;overflow:hidden;">
-    <tr><td colspan="4" style="text-align:center;font-size:8px;font-weight:800;text-transform:uppercase;color:${COLORS.navy};padding:6px 8px 0;">Package Includes</td></tr>
-    <tr>${items}</tr>
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:10px 0 8px;">
+    <tr>
+      <td width="32%" style="border-bottom:1px solid ${COLORS.line};"></td>
+      <td align="center" style="white-space:nowrap;padding:0 10px 4px;font-size:8px;font-weight:800;text-transform:uppercase;color:${COLORS.navy};letter-spacing:0.5px;">Package Includes</td>
+      <td width="32%" style="border-bottom:1px solid ${COLORS.line};"></td>
+    </tr>
+    <tr><td colspan="3" style="padding-top:6px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:8px;overflow:hidden;">
+        <tr>${items}</tr>
+      </table>
+    </td></tr>
   </table>`;
-}
-
-function servicesIncludedBanner(included: Set<string>): string {
-  if (included.size < 2) return '';
-  const list = SERVICE_ORDER.filter((type) => included.has(type)).join(' + ');
-  return `<div style="background:${COLORS.blue};color:#fff;text-align:center;padding:5px 10px;border-radius:999px;font-size:8px;font-weight:700;margin:0 0 8px;">${included.size} Services Included (${list})</div>`;
 }
 
 function passengerDetails(adults: number, children: number, infants: number): string {
   const row = (icon: string, label: string, count: number) =>
     `<tr>
-      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;width:24px;">${icon}</td>
-      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;">${label}</td>
-      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;text-align:center;font-weight:700;width:36px;">${count}</td>
+      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;width:26px;text-align:center;">${icon}</td>
+      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;color:#475569;">${label}</td>
+      <td style="border-top:1px solid ${COLORS.line};padding:5px 8px;font-size:8px;text-align:center;font-weight:700;width:36px;color:${COLORS.text};">${count}</td>
     </tr>`;
 
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:8px;overflow:hidden;">
-    <tr><td colspan="3" style="background:${COLORS.navy};color:#fff;text-align:center;padding:5px;font-size:8px;font-weight:800;text-transform:uppercase;">Passenger Details</td></tr>
-    ${row('👤', 'Adults', adults)}
-    ${row('🧒', 'Children', children)}
-    ${row('👶', 'Infants', infants)}
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:6px;overflow:hidden;">
+    <tr><td colspan="3" style="background:${COLORS.navy};color:#fff;text-align:center;padding:5px;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.3px;">Passenger Details</td></tr>
+    ${row(icons.adults, 'Adults', adults)}
+    ${row(icons.child, 'Children', children)}
+    ${row(icons.infant, 'Infants', infants)}
   </table>`;
 }
 
-function brandHeader(baseUrl?: string): string {
-  const logoSrc = baseUrl ? `${publicBaseUrl(baseUrl)}${LOGO_ASSET_PATH}` : '';
+function brandHeader(): string {
+  const logoSrc = getLogoDataUri();
   const logoBlock = logoSrc
-    ? `<img src="${logoSrc}" alt="${escapeHtml(BRAND_NAME)}" style="max-height:54px;max-width:190px;object-fit:contain;display:block;" />`
+    ? `<img src="${logoSrc}" alt="${escapeHtml(BRAND_NAME)}" style="max-height:58px;max-width:200px;object-fit:contain;display:block;" />`
     : `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
         <tr>
-          <td style="border:3px solid ${COLORS.blue};color:${COLORS.blue};font-size:20px;font-weight:900;padding:2px 6px;line-height:1;">HH</td>
-          <td style="padding-left:8px;color:${COLORS.blue};font-size:15px;font-weight:900;line-height:1.05;">
+          <td style="border:3px solid ${ICON_BLUE};color:${ICON_BLUE};font-size:20px;font-weight:900;padding:2px 6px;line-height:1;">H</td>
+          <td style="padding-left:8px;color:${ICON_BLUE};font-size:15px;font-weight:900;line-height:1.05;">
             HUFFAZ<br><span style="font-size:8px;letter-spacing:2px;">HOLIDAY</span>
           </td>
         </tr>
@@ -391,15 +378,16 @@ function brandHeader(baseUrl?: string): string {
     <tr>
       <td width="30%" valign="top" style="width:30%;vertical-align:top;">
         ${logoBlock}
-        <div style="color:#5682ad;font-size:7px;margin-top:5px;">Your Journey, Our Priority</div>
+        <div style="color:#5682ad;font-size:7px;margin-top:4px;font-style:italic;">Your Journey, Our Priority</div>
       </td>
       <td width="36%" align="center" valign="middle" style="width:36%;text-align:center;vertical-align:middle;">
-        <div style="font-family:Georgia, serif;font-size:24px;font-weight:700;color:${COLORS.navy};letter-spacing:1px;">{{TITLE}}</div>
-        <div style="margin:6px auto 0;width:84px;border-top:2px solid ${COLORS.navy};position:relative;text-align:center;">
-          <span style="display:inline-block;margin-top:-9px;background:#fff;padding:0 4px;color:${COLORS.blue};font-size:11px;">✈</span>
+        <div style="font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:700;color:${COLORS.navy};letter-spacing:2px;">{{TITLE}}</div>
+        <div style="margin:7px auto 0;width:90px;border-top:2px solid ${COLORS.navy};position:relative;text-align:center;">
+          <span style="display:inline-block;margin-top:-8px;background:#fff;padding:0 5px;color:${COLORS.blue};font-size:12px;font-weight:700;">+</span>
         </div>
       </td>
       <td width="34%" valign="top" style="width:34%;vertical-align:top;font-size:8px;">
+        ${flightPathGraphic()}
         {{META}}
       </td>
     </tr>
@@ -421,7 +409,6 @@ export async function renderVoucherPatternHtml(
   const showBreakdown = booking?.priceMode === 'BREAKDOWN';
   const staff = booking?.createdBy;
   const staffName = `${staff?.firstName || ''} ${staff?.lastName || ''}`.trim();
-  const code = await staffCode(staff?.id);
   const customer = booking?.customer;
   const guestName = booking?.guestName
     || (customer?.customerType === 'B2B' ? customer.companyName : `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim())
@@ -446,18 +433,18 @@ export async function renderVoucherPatternHtml(
   const invoiceDate = formatDate(voucher.invoice?.issueDate || voucher.issuedAt || new Date());
 
   const metaRows = [
-    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;width:78px;">${escapeHtml(options.primaryLabel || 'Voucher No.')}</td><td style="padding:2px 0;">${escapeHtml(voucher.voucherNumber)}</td></tr>`,
+    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;white-space:nowrap;">${escapeHtml(options.primaryLabel || 'Voucher No.')} :</td><td style="padding:2px 0 2px 6px;">${escapeHtml(voucher.voucherNumber)}</td></tr>`,
     options.showInvoiceMeta !== false && voucher.invoice?.invoiceNumber
-      ? `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Invoice No.</td><td style="padding:2px 0;">${escapeHtml(voucher.invoice.invoiceNumber)}</td></tr>`
+      ? `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Invoice No. :</td><td style="padding:2px 0 2px 6px;">${escapeHtml(voucher.invoice.invoiceNumber)}</td></tr>`
       : '',
-    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Date</td><td style="padding:2px 0;">${invoiceDate}</td></tr>`,
-    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Booking Ref.</td><td style="padding:2px 0;">${escapeHtml(booking?.bookingNumber || '—')}</td></tr>`,
-    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Issue Date</td><td style="padding:2px 0;">${issueDate}</td></tr>`,
+    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Date :</td><td style="padding:2px 0 2px 6px;">${invoiceDate}</td></tr>`,
+    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Booking Ref. :</td><td style="padding:2px 0 2px 6px;">${escapeHtml(booking?.bookingNumber || '—')}</td></tr>`,
+    `<tr><td style="padding:2px 0;color:${COLORS.navy};font-weight:700;">Issue Date :</td><td style="padding:2px 0 2px 6px;">${issueDate}</td></tr>`,
   ].join('');
 
-  const headerHtml = brandHeader(options.baseUrl)
+  const headerHtml = brandHeader()
     .replace('{{TITLE}}', escapeHtml(title))
-    .replace('{{META}}', `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">${metaRows}</table>`);
+    .replace('{{META}}', `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:2px;">${metaRows}</table>`);
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(voucher.voucherNumber)}</title>
@@ -469,14 +456,14 @@ export async function renderVoucherPatternHtml(
 </style>
 </head>
 <body>
-<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;border:1px solid ${COLORS.line};border-radius:12px;overflow:hidden;">
+<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;">
   <tr>
-    <td style="padding:14px 16px 10px;">
+    <td style="padding:12px 14px 8px;">
       ${headerHtml}
 
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:12px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:14px;">
         <tr>
-          <td width="68%" valign="bottom" style="width:68%;vertical-align:bottom;line-height:1.55;color:#334155;padding-right:16px;">
+          <td width="68%" valign="bottom" style="width:68%;vertical-align:bottom;line-height:1.6;color:#334155;padding-right:14px;">
             <strong style="font-size:11px;">Dear ${escapeHtml(guestName)},</strong><br>
             Thank you for choosing ${escapeHtml(BRAND_NAME)}.<br>
             Please find below the details of your Umrah package.
@@ -487,23 +474,22 @@ export async function renderVoucherPatternHtml(
         </tr>
       </table>
 
-      ${servicesIncludedBanner(includedTypes)}
       ${packageIncludes(includedTypes)}
       ${sections}
 
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:8px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:10px;">
         <tr>
           <td width="50%" valign="top" style="width:50%;vertical-align:top;padding-right:8px;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${COLORS.line};border-radius:8px;min-height:120px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid #b8d4eb;border-radius:6px;min-height:130px;background:#f8fbfe;">
               <tr><td style="padding:8px 10px;">
-                <div style="color:${COLORS.navy};font-size:8px;font-weight:800;text-transform:uppercase;margin-bottom:5px;">Important Notes</div>
-                <ul style="margin:0;padding-left:14px;color:#475569;font-size:8px;line-height:1.55;direction:rtl;text-align:right;">
+                <div style="color:${COLORS.navy};font-size:8px;font-weight:800;text-transform:uppercase;margin-bottom:6px;">Important Notes:</div>
+                <ul style="margin:0;padding-left:14px;color:#475569;font-size:8px;line-height:1.6;direction:rtl;text-align:right;">
                   ${IMPORTANT_NOTES_UR.map((note) => `<li style="margin-bottom:4px;">${escapeHtml(note)}</li>`).join('')}
                 </ul>
                 ${booking?.notes ? `<div style="margin-top:6px;font-size:8px;direction:ltr;text-align:left;"><b>Booking note:</b> ${escapeHtml(booking.notes)}</div>` : ''}
-                <div style="margin-top:10px;padding-top:8px;border-top:1px solid ${COLORS.line};font-size:8px;color:${COLORS.navy};">
+                <div style="margin-top:12px;padding-top:8px;border-top:1px solid ${COLORS.line};font-size:8px;color:${COLORS.navy};">
                   Quotation Given By:
-                  <span style="font-family:'Brush Script MT',cursive;color:#355b89;font-size:16px;margin-left:6px;">${escapeHtml(staffName || BRAND_NAME)}</span>
+                  <span style="font-family:'Brush Script MT',cursive;color:#355b89;font-size:17px;margin-left:8px;">${escapeHtml(staffName || BRAND_NAME)}</span>
                 </div>
               </td></tr>
             </table>
@@ -514,38 +500,21 @@ export async function renderVoucherPatternHtml(
         </tr>
       </table>
 
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:12px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:14px;border-top:2px solid ${COLORS.navy};padding-top:10px;">
         <tr>
-          <td width="34%" valign="bottom" style="width:34%;vertical-align:bottom;font-size:8px;color:#64748b;">
-            Chairman ${escapeHtml(BRAND_NAME)}<br>
-            <span style="display:inline-block;margin-top:3px;color:#31567d;font-size:10px;font-weight:700;">Allama Ibtisam Elahi Zaheer</span>
+          <td width="34%" valign="bottom" style="width:34%;vertical-align:bottom;font-size:8px;color:#64748b;line-height:1.5;">
+            Chairman ${escapeHtml(BRAND_NAME)}:<br>
+            <span style="display:inline-block;margin-top:2px;color:#31567d;font-size:10px;font-weight:700;">Allama Ibtisam Elahi Zaheer</span>
           </td>
-          <td width="33%" valign="bottom" style="width:33%;vertical-align:bottom;font-size:8px;color:#64748b;padding:0 8px;">
-            📍 ${escapeHtml(FOOTER_ADDRESS)}
+          <td width="33%" valign="bottom" style="width:33%;vertical-align:bottom;font-size:8px;color:#64748b;padding:0 8px;line-height:1.5;">
+            ${icons.pin} ${escapeHtml(FOOTER_ADDRESS)}
           </td>
-          <td width="33%" align="right" valign="bottom" style="width:33%;text-align:right;vertical-align:bottom;font-size:8px;color:#64748b;">
-            ${FOOTER_PHONES.map((phone) => `📞 ${escapeHtml(phone)}`).join('<br>')}
-            <br>🌐 ${escapeHtml(FOOTER_WEBSITE)}
-          </td>
-        </tr>
-        <tr>
-          <td colspan="2"></td>
-          <td align="right" valign="bottom" style="text-align:right;vertical-align:bottom;padding-top:8px;">
-            <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:2px solid ${COLORS.navy};display:inline-block;text-align:center;border-radius:8px;">
-              <tr><td style="padding:8px 12px;line-height:1.45;">
-                <div style="color:${COLORS.navy};font-size:12px;font-weight:700;">Thanks &amp; Regards</div>
-                <div style="font-size:12px;font-weight:800;margin-top:2px;">${escapeHtml(code)} - ${escapeHtml((staffName || BRAND_NAME).toUpperCase())}</div>
-                ${staff?.phone ? `<div style="font-size:9px;margin-top:2px;"><span style="color:${COLORS.navy};font-weight:700;">Phone:</span> ${escapeHtml(staff.phone)}</div>` : ''}
-                <div style="font-size:9px;margin-top:2px;"><span style="color:${COLORS.navy};font-weight:700;">Reservation Print Date:</span> ${formatDate(new Date())}</div>
-              </td></tr>
-            </table>
+          <td width="33%" align="right" valign="bottom" style="width:33%;text-align:right;vertical-align:bottom;font-size:8px;color:#64748b;line-height:1.7;">
+            ${FOOTER_PHONES.map((phone) => `<div>${icons.phone} ${escapeHtml(phone)}</div>`).join('')}
+            <div>${icons.globe} ${escapeHtml(FOOTER_WEBSITE)}</div>
           </td>
         </tr>
       </table>
-
-      <div style="border-top:2px solid ${COLORS.navy};margin-top:10px;padding-top:6px;font-size:7px;color:#335b82;text-align:center;">
-        ${escapeHtml(FOOTER_ADDRESS)} &nbsp;|&nbsp; ${FOOTER_PHONES.join(' &nbsp;|&nbsp; ')} &nbsp;|&nbsp; ${escapeHtml(FOOTER_EMAIL)} &nbsp;|&nbsp; ${escapeHtml(FOOTER_WEBSITE)}
-      </div>
     </td>
   </tr>
 </table>
