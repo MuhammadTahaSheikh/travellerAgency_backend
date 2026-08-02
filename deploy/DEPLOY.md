@@ -43,6 +43,16 @@ npm install && npx prisma generate && npx prisma db push && npm run build
 pm2 restart travel-agency-api
 ```
 
+### Login fails with "Cannot connect to API" (CORS)
+
+Ensure production `.env` includes every frontend URL users open in the browser:
+
+```env
+CORS_ORIGINS=https://traveller-agency-frontend.vercel.app,https://travel.bestechvision.com,http://localhost:3000
+```
+
+Then `pm2 restart travel-agency-api`.
+
 ## Use Hostinger MySQL (phpMyAdmin) instead of VPS local DB
 
 ### Step 1 — Allow VPS to connect (required)

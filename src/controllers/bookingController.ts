@@ -11,7 +11,7 @@ import {
   createCheckInsFromBooking,
   syncBookingInvoiceAndLedger,
 } from '../services/invoiceService';
-import { postVendorCostToLedger, syncPendingVendorPostingsFromBooking } from '../services/vendorPostingService';
+import { postVendorCostToLedger, syncPendingVendorPostingsFromBooking, createVendorPostingsFromBooking } from '../services/vendorPostingService';
 import { processBookingRefund } from '../services/bookingRefundService';
 
 function derivePaymentStatus(paidAmount: number, totalAmount: number): string {
@@ -99,7 +99,7 @@ async function submitConfirmationRequest(bookingId: string, userId: string, user
         'BOOKING_CONFIRMATION_REQUEST',
         'Booking Confirmation Request',
         `${userName} requested confirmation for booking ${booking.bookingNumber}`,
-        '/approvals?tab=booking'
+        `/approvals?tab=booking&booking=${encodeURIComponent(booking.bookingNumber)}`
       )
     )
   );
@@ -153,7 +153,7 @@ export async function getBookings(req: AuthRequest, res: Response) {
 }
 
 export async function getBooking(req: AuthRequest, res: Response) {
-  const booking = await prisma.booking.findUnique({
+  let booking = await prisma.booking.findUnique({
     where: { id: paramId(req) },
     include: {
       customer: true,
@@ -170,6 +170,38 @@ export async function getBooking(req: AuthRequest, res: Response) {
   });
 
   if (!booking) return res.status(404).json({ success: false, error: 'Booking not found' });
+
+  // Confirmed bookings with services but no vendor postings (e.g. zero cost) — create them
+  // so Posting Status can show Cost / Res # / vendor assignment.
+  const needsPostings =
+    (booking.status === 'CONFIRMED' || booking.status === 'PARTIALLY_REFUNDED') &&
+    booking.serviceItems.length > 0 &&
+    booking.vendorPostings.length === 0;
+
+  if (needsPostings) {
+    try {
+      await createVendorPostingsFromBooking(booking.id);
+      booking = await prisma.booking.findUnique({
+        where: { id: booking.id },
+        include: {
+          customer: true,
+          package: { include: { destinations: true } },
+          createdBy: { select: { firstName: true, lastName: true, email: true } },
+          bookingCustomers: { include: { customer: true } },
+          serviceItems: { include: { vendor: true } },
+          invoices: { include: { items: true } },
+          checkIns: true,
+          vendorCosts: { include: { vendor: true } },
+          vouchers: true,
+          vendorPostings: { include: { vendor: true } },
+        },
+      });
+      if (!booking) return res.status(404).json({ success: false, error: 'Booking not found' });
+    } catch (err) {
+      console.error('Failed to ensure vendor postings for booking', booking.id, err);
+    }
+  }
+
   return res.json({ success: true, data: enrichBooking(booking as Parameters<typeof enrichBooking>[0]) });
 }
 

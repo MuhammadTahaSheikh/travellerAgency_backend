@@ -400,6 +400,28 @@ function rowPostingLabel(serviceType: ServiceType, row: Record<string, string>, 
   return fallback;
 }
 
+function nightsBetween(checkIn?: string, checkOut?: string): number {
+  if (!checkIn || !checkOut) return 0;
+  const a = new Date(checkIn);
+  const b = new Date(checkOut);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 0;
+  const diff = Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+  return diff > 0 ? diff : 0;
+}
+
+/** Prefer costTotal; for hotels fall back to costPerNight × nights × rooms. */
+function rowExpectedCost(serviceType: ServiceType, row: Record<string, string>): number {
+  const fromTotal = Number(row.costTotal || 0);
+  if (fromTotal > 0) return fromTotal;
+  if (serviceType === 'HOTEL') {
+    const perNight = Number(row.costPerNight || 0);
+    const nights = nightsBetween(row.checkInDate, row.checkOutDate);
+    const rooms = Math.max(1, parseInt(String(row.numRooms || '1'), 10) || 1);
+    return perNight * nights * rooms;
+  }
+  return Number(row.cost || 0);
+}
+
 type PostingContext = { bookingNumber: string; customerName: string };
 
 /** Build expected vendor posting lines from booking service items (same order as create). */
@@ -418,8 +440,8 @@ export function buildPostingSpecsFromServiceItems(
 
     if (rowBased && rows.length > 0) {
       for (const row of rows) {
-        const cost = Number(row.costTotal || 0);
-        if (cost <= 0) continue;
+        // Include zero-cost rows so vendor can still be assigned (Cost / Res # shown as 0 / —).
+        const cost = rowExpectedCost(item.serviceType, row);
         const shortLabel = rowPostingLabel(item.serviceType, row, item.description);
         const description = context
           ? buildDetailedPostingDescription(
@@ -444,8 +466,8 @@ export function buildPostingSpecsFromServiceItems(
       continue;
     }
 
-    const cost = details.costOriginal != null ? Number(details.costOriginal) : Number(item.costAmount);
-    if (cost <= 0) continue;
+    const cost = details.costOriginal != null ? Number(details.costOriginal) : Number(item.costAmount || 0);
+    // Include zero-cost services so Posting Status still lists them for vendor assignment.
     const description = context
       ? buildDetailedPostingDescription(
           context.bookingNumber,
@@ -496,20 +518,22 @@ export async function syncPendingVendorPostingsFromBooking(bookingId: string, tx
 
     if (specs.length === 0 && pending.length === 0) return [];
 
-    const pendingByKey = new Map<string, typeof pending>();
+    // Match pending postings to specs by serviceType in creation order.
+    // Specs use shortLabel keys while stored descriptions are detailed ledger text,
+    // so serviceType queues avoid duplicate creates on re-sync.
+    const pendingByType = new Map<string, typeof pending>();
     for (const posting of pending) {
-      const key = `${posting.serviceType}::${posting.description}`;
-      const list = pendingByKey.get(key) || [];
+      const list = pendingByType.get(posting.serviceType) || [];
       list.push(posting);
-      pendingByKey.set(key, list);
+      pendingByType.set(posting.serviceType, list);
     }
 
     const updated: Awaited<ReturnType<typeof createVendorPosting>>[] = [];
 
     for (const spec of specs) {
-      const queue = pendingByKey.get(spec.key) || [];
+      const queue = pendingByType.get(spec.serviceType) || [];
       const posting = queue.shift();
-      pendingByKey.set(spec.key, queue);
+      pendingByType.set(spec.serviceType, queue);
 
       if (posting) {
         const vendorId = spec.vendorId ?? null;

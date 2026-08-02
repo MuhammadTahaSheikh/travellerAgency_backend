@@ -78,7 +78,7 @@ export async function createBookingConfirmationRequest(req: AuthRequest, res: Re
         'BOOKING_CONFIRMATION_REQUEST',
         'Booking Confirmation Request',
         `${req.user!.firstName} ${req.user!.lastName} requested confirmation for booking ${booking.bookingNumber}`,
-        '/approvals?tab=booking'
+        `/approvals?tab=booking&booking=${encodeURIComponent(booking.bookingNumber)}`
       )
     )
   );

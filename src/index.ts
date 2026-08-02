@@ -41,16 +41,23 @@ const app = express();
 
 const devOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?$/;
 
+function parseAllowedOrigins(): string[] {
+  const fromEnv = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    ...fromEnv,
+  ];
+}
+
 app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      const configured = process.env.FRONTEND_URL;
-      const allowed = [
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        configured,
-      ].filter(Boolean) as string[];
+      const allowed = parseAllowedOrigins();
 
       if (
         allowed.includes(origin) ||
