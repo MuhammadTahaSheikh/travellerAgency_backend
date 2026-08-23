@@ -111,11 +111,11 @@ function itemsOf(booking: ConfirmationVoucher['booking'], type: string): Service
 }
 
 function field(label: string, value: string): string {
-  return `<span style="font-weight:700;">${escapeHtml(label)}</span> <span style="font-weight:700;">${escapeHtml(value)}</span>`;
+  return `<span style="font-weight:700;">${escapeHtml(label)}</span> <span style="font-weight:400;">${escapeHtml(value)}</span>`;
 }
 
 function tableCell(value: string): string {
-  return `<td style="border:1px solid #000;padding:6px 4px;text-align:center;font-size:13px;color:${TEXT};">${escapeHtml(value)}</td>`;
+  return `<td style="border:1px solid #000;padding:6px 4px;text-align:center;font-size:13px;font-weight:400;color:${TEXT};background:#ffffff;">${escapeHtml(value)}</td>`;
 }
 
 function confirmationTable(headers: string[], rows: string[][]): string {
@@ -331,26 +331,25 @@ export async function renderDefiniteConfirmationHtml(
 
   const remarkItems = STANDARD_REMARKS.map((note) => `
     <tr>
-      <td valign="top" style="width:16px;padding:7px 8px 6px 0;">
-        <div style="width:5px;height:5px;background:${NOTE};"></div>
-      </td>
-      <td style="padding:0 0 8px;color:${NOTE};font-size:13px;line-height:1.45;">${escapeHtml(note)}</td>
+      <td valign="top" style="width:14px;padding:0 8px 8px 0;font-size:13px;line-height:18px;color:${NOTE};">&#9642;</td>
+      <td valign="top" style="padding:0 0 8px;color:${NOTE};font-size:13px;line-height:18px;font-weight:400;">${escapeHtml(note)}</td>
     </tr>`).join('');
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Definite Confirmation ${escapeHtml(voucher.voucherNumber)}</title>
 <style>
-  @page { size: A4 portrait; margin: 12mm 14mm; }
+  @page { size: A4 portrait; margin: 12mm 14mm; background: #ffffff; }
   * { box-sizing: border-box; }
-  body { margin: 0; padding: 0; background: #fff; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
+  html, body { margin: 0; padding: 0; background: #ffffff !important; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
+  table, td, th { background-color: transparent; }
   img { border: 0; }
 </style>
 </head>
-<body>
-<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;">
+<body style="background:#ffffff;margin:0;padding:0;">
+<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;background:#ffffff;">
   <tr>
-    <td style="padding:22px 28px 16px;position:relative;">
-      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:248px;width:280px;height:280px;margin-left:-140px;opacity:0.08;pointer-events:none;" />` : ''}
+    <td style="padding:22px 28px 16px;position:relative;background:#ffffff;">
+      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:248px;width:280px;height:280px;margin-left:-140px;opacity:0.05;pointer-events:none;" />` : ''}
 
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
         <tr>
@@ -375,14 +374,14 @@ export async function renderDefiniteConfirmationHtml(
 
       <div style="font-size:13px;color:${TEXT};margin-bottom:16px;">Thank you for considering ${escapeHtml(BRAND_NAME)} as your travel partner.</div>
 
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;background:#ffffff;">
         <tr>
-          <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Res No:', resNo)}</td>
-          <td width="50%" style="width:50%;padding:6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field(secondaryLabel, secondaryValue)}</td>
+          <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;color:${TEXT};background:#ffffff;">${field('Res No:', resNo)}</td>
+          <td width="50%" style="width:50%;padding:6px 0;font-size:15px;color:${TEXT};background:#ffffff;">${field(secondaryLabel, secondaryValue)}</td>
         </tr>
         <tr>
-          <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Guest Name:', guestName)}</td>
-          <td width="50%" style="width:50%;padding:6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Total PAX:', totalPax ? String(totalPax) : '')}</td>
+          <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;color:${TEXT};background:#ffffff;">${field('Guest Name:', guestName)}</td>
+          <td width="50%" style="width:50%;padding:6px 0;font-size:15px;color:${TEXT};background:#ffffff;">${field('Total PAX:', totalPax ? String(totalPax) : '')}</td>
         </tr>
       </table>
 
