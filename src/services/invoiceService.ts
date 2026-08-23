@@ -12,7 +12,7 @@ import {
   updateCustomerAccountLabel,
 } from './ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from './currencyService';
-import { renderVoucherPatternHtml } from './voucherPatternTemplate';
+import { renderDefiniteConfirmationHtml } from './hotelVoucherTemplate';
 import { createVendorPostingsFromBooking } from './vendorPostingService';
 import {
   createVendorAccount,
@@ -234,7 +234,7 @@ export async function syncBookingInvoiceAndLedger(bookingId: string, tx?: TxClie
   return invoice;
 }
 
-export async function renderInvoiceHtml(invoiceId: string, baseUrl?: string) {
+export async function renderInvoiceHtml(invoiceId: string, _baseUrl?: string) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: {
@@ -257,20 +257,12 @@ export async function renderInvoiceHtml(invoiceId: string, baseUrl?: string) {
     ? invoice.customer.companyName
     : `${invoice.customer?.firstName || ''} ${invoice.customer?.lastName || ''}`.trim();
 
-  return renderVoucherPatternHtml({
+  return renderDefiniteConfirmationHtml({
     voucherNumber: invoice.invoiceNumber,
-    guestName: billTo,
+    guestName: billTo || invoice.booking?.guestName || '',
     issuedAt: invoice.issueDate,
-    remainingBalance: Number(invoice.totalAmount) - Number(invoice.paidAmount),
-    paymentStatus: invoice.status,
     booking: invoice.booking,
-    invoice,
-  }, 'COMPLETE', {
-    title: 'INVOICE',
-    primaryLabel: 'Invoice No.',
-    showInvoiceMeta: false,
-    baseUrl,
-  });
+  }, 'COMPLETE');
 }
 
 export async function allocateVendorCosts(bookingId: string, tx?: TxClient) {
