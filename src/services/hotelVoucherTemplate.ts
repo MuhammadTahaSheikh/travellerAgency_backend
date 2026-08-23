@@ -4,17 +4,40 @@ import { escapeHtml } from '../utils/exportHelpers';
 import { BRAND_NAME } from './documentBrand';
 
 type DetailMap = Record<string, unknown>;
+type VoucherFormatName = 'COMPLETE' | 'HOTEL' | 'TRANSPORT';
 
-type HotelTableRow = {
-  qty: string;
-  roomType: string;
-  checkIn: string;
-  checkOut: string;
-  nights: string;
-  confirmation: string;
-  view: string;
-  mealPlan: string;
-  hotelName: string;
+type ServiceItem = {
+  serviceType: string;
+  description: string;
+  details?: unknown;
+};
+
+type ConfirmationVoucher = {
+  voucherNumber: string;
+  guestName: string;
+  hotelName?: string | null;
+  checkInDate?: Date | null;
+  checkOutDate?: Date | null;
+  roomDetails?: string | null;
+  issuedAt?: Date | null;
+  transportDetails?: unknown;
+  booking?: {
+    bookingNumber?: string;
+    guestName?: string | null;
+    adults?: number;
+    children?: number;
+    infants?: number;
+    notes?: string | null;
+    createdBy?: { firstName?: string; lastName?: string; phone?: string | null } | null;
+    customer?: {
+      customerType?: string;
+      companyName?: string | null;
+      contactPerson?: string | null;
+      firstName?: string;
+      lastName?: string;
+    } | null;
+    serviceItems?: ServiceItem[];
+  } | null;
 };
 
 const NAVY = '#1e2a78';
@@ -78,112 +101,173 @@ function rowsOf(details: DetailMap): DetailMap[] {
     : [details];
 }
 
-function collectHotelRows(
-  booking: {
-    serviceItems?: Array<{
-      serviceType: string;
-      description: string;
-      details?: unknown;
-    }>;
-  } | null | undefined,
-  fallback: {
-    hotelName?: string | null;
-    checkInDate?: Date | null;
-    checkOutDate?: Date | null;
-    roomDetails?: string | null;
-  }
-): HotelTableRow[] {
-  const items = (booking?.serviceItems || []).filter((item) => item.serviceType === 'HOTEL');
-  const rows: HotelTableRow[] = [];
+function splitSector(value: unknown): [string, string] {
+  const parts = text(value).split(/\s*(?:-|–|→|>)\s*/).filter(Boolean);
+  return [parts[0] || '', parts.slice(1).join(' - ')];
+}
 
-  for (const item of items) {
-    const details = (item.details as DetailMap | null) || {};
-    for (const row of rowsOf(details)) {
-      const checkIn = text(row.checkInDate || details.checkInDate) || fallback.checkInDate;
-      const checkOut = text(row.checkOutDate || details.checkOutDate) || fallback.checkOutDate;
-      const nights = nightsBetween(checkIn, checkOut);
-      rows.push({
-        qty: text(row.numRooms) || '1',
-        roomType: text(row.roomType || details.roomType || fallback.roomDetails),
-        checkIn: formatDisplayDate(checkIn),
-        checkOut: formatDisplayDate(checkOut),
-        nights: nights ? String(nights) : '',
-        confirmation: text(row.vendorResNo || details.vendorResNo),
-        view: text(row.view || details.view),
-        mealPlan: text(row.mealPlan || details.mealPlan),
-        hotelName: text(row.hotelName || details.hotelName || fallback.hotelName || item.description),
-      });
-    }
-  }
-
-  if (rows.length === 0 && (fallback.hotelName || fallback.checkInDate)) {
-    const nights = nightsBetween(fallback.checkInDate, fallback.checkOutDate);
-    rows.push({
-      qty: '1',
-      roomType: text(fallback.roomDetails),
-      checkIn: formatDisplayDate(fallback.checkInDate),
-      checkOut: formatDisplayDate(fallback.checkOutDate),
-      nights: nights ? String(nights) : '',
-      confirmation: '',
-      view: '',
-      mealPlan: '',
-      hotelName: text(fallback.hotelName),
-    });
-  }
-
-  return rows;
+function itemsOf(booking: ConfirmationVoucher['booking'], type: string): ServiceItem[] {
+  return (booking?.serviceItems || []).filter((item) => item.serviceType === type);
 }
 
 function field(label: string, value: string): string {
   return `<span style="font-weight:700;">${escapeHtml(label)}</span> <span style="font-weight:700;">${escapeHtml(value)}</span>`;
 }
 
-function tableCell(value: string, extra = ''): string {
-  return `<td style="border:1px solid #000;padding:6px 4px;text-align:center;font-size:13px;color:${TEXT};${extra}">${escapeHtml(value)}</td>`;
+function tableCell(value: string): string {
+  return `<td style="border:1px solid #000;padding:6px 4px;text-align:center;font-size:13px;color:${TEXT};">${escapeHtml(value)}</td>`;
 }
 
-export async function renderHotelDefiniteConfirmationHtml(
-  voucher: {
-    voucherNumber: string;
-    guestName: string;
-    hotelName?: string | null;
-    checkInDate?: Date | null;
-    checkOutDate?: Date | null;
-    roomDetails?: string | null;
-    issuedAt?: Date | null;
-    booking?: {
-      bookingNumber?: string;
-      guestName?: string | null;
-      adults?: number;
-      children?: number;
-      infants?: number;
-      notes?: string | null;
-      createdBy?: { firstName?: string; lastName?: string; phone?: string | null } | null;
-      customer?: {
-        customerType?: string;
-        companyName?: string | null;
-        contactPerson?: string | null;
-        firstName?: string;
-        lastName?: string;
-      } | null;
-      serviceItems?: Array<{
-        serviceType: string;
-        description: string;
-        details?: unknown;
-      }>;
-    } | null;
+function confirmationTable(headers: string[], rows: string[][]): string {
+  const body = rows.length
+    ? rows.map((row) => `<tr>${row.map((cell) => tableCell(cell)).join('')}</tr>`).join('')
+    : `<tr><td colspan="${headers.length}" style="border:1px solid #000;padding:8px;text-align:center;color:#94a3b8;">No details</td></tr>`;
+
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;table-layout:fixed;margin-bottom:14px;">
+    <thead>
+      <tr>
+        ${headers.map((header) =>
+          `<th style="background:${NAVY};color:#fff;font-size:13px;font-weight:700;padding:7px 4px;text-align:center;border:1px solid #000;">${escapeHtml(header)}</th>`
+        ).join('')}
+      </tr>
+    </thead>
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+function sectionLabel(title: string): string {
+  return `<div style="font-size:13px;font-weight:700;color:${TEXT};margin:4px 0 6px;">${escapeHtml(title)}</div>`;
+}
+
+function hotelRows(
+  items: ServiceItem[],
+  fallback: { hotelName?: string | null; checkInDate?: Date | null; checkOutDate?: Date | null; roomDetails?: string | null }
+): string[][] {
+  const rows: string[][] = [];
+  for (const item of items) {
+    const details = (item.details as DetailMap | null) || {};
+    for (const row of rowsOf(details)) {
+      const checkIn = text(row.checkInDate || details.checkInDate) || fallback.checkInDate;
+      const checkOut = text(row.checkOutDate || details.checkOutDate) || fallback.checkOutDate;
+      const nights = nightsBetween(checkIn, checkOut);
+      rows.push([
+        text(row.numRooms) || '1',
+        text(row.roomType || details.roomType || fallback.roomDetails),
+        formatDisplayDate(checkIn),
+        formatDisplayDate(checkOut),
+        nights ? String(nights) : '',
+        text(row.vendorResNo || details.vendorResNo),
+        text(row.view || details.view),
+        text(row.mealPlan || details.mealPlan),
+      ]);
+    }
   }
+  if (!rows.length && (fallback.hotelName || fallback.checkInDate)) {
+    const nights = nightsBetween(fallback.checkInDate, fallback.checkOutDate);
+    rows.push([
+      '1',
+      text(fallback.roomDetails),
+      formatDisplayDate(fallback.checkInDate),
+      formatDisplayDate(fallback.checkOutDate),
+      nights ? String(nights) : '',
+      '',
+      '',
+      '',
+    ]);
+  }
+  return rows;
+}
+
+function hotelNameFrom(items: ServiceItem[], fallback?: string | null): string {
+  for (const item of items) {
+    const details = (item.details as DetailMap | null) || {};
+    for (const row of rowsOf(details)) {
+      const name = text(row.hotelName || details.hotelName || fallback || item.description);
+      if (name) return name;
+    }
+  }
+  return text(fallback);
+}
+
+function transportRows(items: ServiceItem[], fallback?: DetailMap): string[][] {
+  const rows: string[][] = [];
+  for (const item of items) {
+    const details = (item.details as DetailMap | null) || {};
+    for (const row of rowsOf(details)) {
+      const [from, to] = splitSector(row.sector || details.sector || fallback?.sector);
+      rows.push([
+        text(row.quantity || details.quantity) || '1',
+        text(row.vehicleType || details.vehicleType || fallback?.vehicleType),
+        from,
+        to,
+        formatDisplayDate(text(row.date || details.date || details.transportDate || fallback?.date || fallback?.transportDate)),
+        text(row.vendorResNo || details.vendorResNo || fallback?.vendorResNo),
+      ]);
+    }
+  }
+  if (!rows.length && fallback && (fallback.sector || fallback.vehicleType || fallback.description)) {
+    const [from, to] = splitSector(fallback.sector);
+    rows.push([
+      '1',
+      text(fallback.vehicleType),
+      from,
+      to,
+      formatDisplayDate(text(fallback.date || fallback.transportDate)),
+      text(fallback.vendorResNo),
+    ]);
+  }
+  return rows;
+}
+
+function ticketRows(items: ServiceItem[]): string[][] {
+  return items.flatMap((item) => {
+    const details = (item.details as DetailMap | null) || {};
+    return rowsOf(details).map((row) => {
+      const [from, to] = splitSector(row.sector || details.sector);
+      return [
+        '1',
+        text(row.airline || details.airline),
+        text(row.sector || details.sector) || [from, to].filter(Boolean).join('-'),
+        formatDisplayDate(text(row.date || details.departureDate)),
+        text(row.class || details.class),
+        text(row.vendorResNo || details.vendorResNo),
+      ];
+    });
+  });
+}
+
+function visaRows(items: ServiceItem[]): string[][] {
+  return items.map((item) => {
+    const details = (item.details as DetailMap | null) || {};
+    return [
+      text(details.quantity) || '1',
+      text(details.visaType) || item.description,
+      text(details.country),
+      text(details.validity),
+      text(details.vendorResNo),
+    ];
+  });
+}
+
+function transportFallback(voucher: ConfirmationVoucher): DetailMap {
+  const raw = (voucher.transportDetails as DetailMap | null) || {};
+  return {
+    ...raw,
+    sector: raw.sector || [raw.pickupLocation, raw.dropoffLocation].filter(Boolean).join(' - '),
+    date: raw.date || raw.transportDate,
+    vehicleType: raw.vehicleType,
+    description: raw.description,
+    vendorResNo: raw.vendorResNo,
+  };
+}
+
+export async function renderDefiniteConfirmationHtml(
+  voucher: ConfirmationVoucher,
+  format: VoucherFormatName = 'HOTEL'
 ): Promise<string> {
   const booking = voucher.booking;
   const customer = booking?.customer;
   const isB2B = customer?.customerType === 'B2B' && !!customer.companyName;
-  const hotelRows = collectHotelRows(booking, {
-    hotelName: voucher.hotelName,
-    checkInDate: voucher.checkInDate,
-    checkOutDate: voucher.checkOutDate,
-    roomDetails: voucher.roomDetails,
-  });
-
   const guestName = booking?.guestName
     || (customer && customer.customerType !== 'B2B'
       ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim()
@@ -191,7 +275,6 @@ export async function renderHotelDefiniteConfirmationHtml(
     || voucher.guestName;
   const toLine = isB2B ? customer!.companyName! : guestName;
   const attLine = isB2B ? (customer!.contactPerson || guestName) : guestName;
-  const primaryHotel = hotelRows[0]?.hotelName || voucher.hotelName || '';
   const totalPax = (booking?.adults ?? 0) + (booking?.children ?? 0) + (booking?.infants ?? 0);
   const resNo = booking?.bookingNumber || voucher.voucherNumber;
   const printDate = formatDisplayDate(voucher.issuedAt || new Date());
@@ -202,17 +285,49 @@ export async function renderHotelDefiniteConfirmationHtml(
   const staffPhone = text(booking?.createdBy?.phone);
   const logo = squareLogoDataUri();
 
-  const tableBody = hotelRows.map((row) => `
-    <tr>
-      ${tableCell(row.qty, 'width:7%;')}
-      ${tableCell(row.roomType, 'width:15%;')}
-      ${tableCell(row.checkIn, 'width:13%;')}
-      ${tableCell(row.checkOut, 'width:13%;')}
-      ${tableCell(row.nights, 'width:10%;')}
-      ${tableCell(row.confirmation, 'width:16%;')}
-      ${tableCell(row.view, 'width:13%;')}
-      ${tableCell(row.mealPlan, 'width:13%;')}
-    </tr>`).join('');
+  const hotelItems = itemsOf(booking, 'HOTEL');
+  const transportItems = itemsOf(booking, 'TRANSPORT');
+  const ticketItems = itemsOf(booking, 'TICKET');
+  const visaItems = itemsOf(booking, 'VISA');
+  const showHotel = format !== 'TRANSPORT';
+  const showTransport = format !== 'HOTEL';
+  const showTicket = format === 'COMPLETE';
+  const showVisa = format === 'COMPLETE';
+
+  const hotelTableRows = showHotel ? hotelRows(hotelItems, {
+    hotelName: voucher.hotelName,
+    checkInDate: voucher.checkInDate,
+    checkOutDate: voucher.checkOutDate,
+    roomDetails: voucher.roomDetails,
+  }) : [];
+  const transportTableRows = showTransport ? transportRows(transportItems, transportFallback(voucher)) : [];
+  const ticketTableRows = showTicket ? ticketRows(ticketItems) : [];
+  const visaTableRows = showVisa ? visaRows(visaItems) : [];
+
+  const primaryHotel = hotelNameFrom(hotelItems, voucher.hotelName);
+  const primaryVehicle = transportTableRows[0]?.[1] || text((voucher.transportDetails as DetailMap | null)?.vehicleType);
+  const secondaryLabel = format === 'TRANSPORT' || (format === 'COMPLETE' && !primaryHotel)
+    ? 'Service:'
+    : 'Hotel Name:';
+  const secondaryValue = format === 'TRANSPORT'
+    ? (primaryVehicle || 'Transport')
+    : primaryHotel || (ticketTableRows.length ? 'Ticket' : visaTableRows.length ? 'Visa' : primaryVehicle);
+
+  const stacked = [hotelTableRows, transportTableRows, ticketTableRows, visaTableRows].filter((rows) => rows.length).length > 1;
+  const tables = [
+    hotelTableRows.length
+      ? `${stacked ? sectionLabel('Hotel') : ''}${confirmationTable(['QTY', 'Room Type', 'Checkin', 'Checkout', 'Nights', 'Confirmation', 'View', 'Meal Plan'], hotelTableRows)}`
+      : '',
+    transportTableRows.length
+      ? `${stacked ? sectionLabel('Transport') : ''}${confirmationTable(['QTY', 'Vehicle Type', 'From', 'To', 'Date', 'Confirmation'], transportTableRows)}`
+      : '',
+    ticketTableRows.length
+      ? `${stacked ? sectionLabel('Ticket') : ''}${confirmationTable(['QTY', 'Airline', 'Sector', 'Date', 'Class', 'Confirmation'], ticketTableRows)}`
+      : '',
+    visaTableRows.length
+      ? `${stacked ? sectionLabel('Visa') : ''}${confirmationTable(['QTY', 'Visa Type', 'Country', 'Validity', 'Confirmation'], visaTableRows)}`
+      : '',
+  ].join('');
 
   const remarkItems = STANDARD_REMARKS.map((note) => `
     <tr>
@@ -263,7 +378,7 @@ export async function renderHotelDefiniteConfirmationHtml(
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;">
         <tr>
           <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Res No:', resNo)}</td>
-          <td width="50%" style="width:50%;padding:6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Hotel Name:', primaryHotel)}</td>
+          <td width="50%" style="width:50%;padding:6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field(secondaryLabel, secondaryValue)}</td>
         </tr>
         <tr>
           <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Guest Name:', guestName)}</td>
@@ -271,16 +386,7 @@ export async function renderHotelDefiniteConfirmationHtml(
         </tr>
       </table>
 
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;table-layout:fixed;">
-        <thead>
-          <tr>
-            ${['QTY', 'Room Type', 'Checkin', 'Checkout', 'Nights', 'Confirmation', 'View', 'Meal Plan'].map((header) =>
-              `<th style="background:${NAVY};color:#fff;font-size:13px;font-weight:700;padding:7px 4px;text-align:center;border:1px solid #000;">${header}</th>`
-            ).join('')}
-          </tr>
-        </thead>
-        <tbody>${tableBody || `<tr><td colspan="8" style="border:1px solid #000;padding:8px;text-align:center;color:#94a3b8;">No room details</td></tr>`}</tbody>
-      </table>
+      ${tables || confirmationTable(['QTY', 'Details'], [])}
 
       <div style="margin-top:12px;font-size:12px;font-style:italic;font-weight:700;color:${MUTED};">
         Remarks:${remarksValue ? ` ${escapeHtml(remarksValue)}` : ''}
@@ -312,4 +418,8 @@ export async function renderHotelDefiniteConfirmationHtml(
   </tr>
 </table>
 </body></html>`;
+}
+
+export async function renderHotelDefiniteConfirmationHtml(voucher: ConfirmationVoucher): Promise<string> {
+  return renderDefiniteConfirmationHtml(voucher, 'HOTEL');
 }

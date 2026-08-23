@@ -1,8 +1,7 @@
 import prisma from '../config/database';
 import { voucherNumberFromLinkedDocument } from './numberingService';
 import { VoucherFormat } from '@prisma/client';
-import { renderHotelDefiniteConfirmationHtml } from './hotelVoucherTemplate';
-import { renderVoucherPatternHtml } from './voucherPatternTemplate';
+import { renderDefiniteConfirmationHtml } from './hotelVoucherTemplate';
 
 function paymentStatusLabel(invoice: { totalAmount: unknown; paidAmount: unknown } | null | undefined) {
   if (!invoice) return 'PAID';
@@ -166,7 +165,7 @@ export async function generateVoucherFromPayment(paymentId: string) {
   return generateVouchersForApprovedInvoice(payment.invoiceId);
 }
 
-export async function renderVoucherHtml(voucherId: string, format?: VoucherFormat, baseUrl?: string) {
+export async function renderVoucherHtml(voucherId: string, format?: VoucherFormat, _baseUrl?: string) {
   const voucher = await prisma.voucher.findUnique({
     where: { id: voucherId },
     include: {
@@ -184,10 +183,7 @@ export async function renderVoucherHtml(voucherId: string, format?: VoucherForma
 
   if (!voucher) throw new Error('Voucher not found');
   const fmt = format || voucher.voucherFormat;
-  if (fmt === 'HOTEL') {
-    return renderHotelDefiniteConfirmationHtml(voucher);
-  }
-  return renderVoucherPatternHtml(voucher, fmt, { baseUrl });
+  return renderDefiniteConfirmationHtml(voucher, fmt);
 }
 
 export async function markVoucherShared(voucherId: string) {
