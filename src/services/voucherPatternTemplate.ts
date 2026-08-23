@@ -1,6 +1,6 @@
 import { escapeHtml } from '../utils/exportHelpers';
 import { BRAND_NAME } from './documentBrand';
-import { flightPathGraphic, getLogoDataUri, icons, sectionIcon, serviceIcon, BLUE as ICON_BLUE } from './invoicePatternIcons';
+import { flightPathGraphic, icons, logoHtml, sectionIcon, serviceIcon, BLUE as ICON_BLUE } from './invoicePatternIcons';
 
 type DetailMap = Record<string, unknown>;
 type VoucherFormatName = 'COMPLETE' | 'HOTEL' | 'TRANSPORT';
@@ -362,10 +362,7 @@ function passengerDetails(adults: number, children: number, infants: number): st
 }
 
 function brandHeader(): string {
-  const logoSrc = getLogoDataUri();
-  const logoBlock = logoSrc
-    ? `<img src="${logoSrc}" alt="${escapeHtml(BRAND_NAME)}" style="max-height:58px;max-width:200px;object-fit:contain;display:block;" />`
-    : `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+  const logoBlock = logoHtml(escapeHtml(BRAND_NAME)) || `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
         <tr>
           <td style="border:3px solid ${ICON_BLUE};color:${ICON_BLUE};font-size:20px;font-weight:900;padding:2px 6px;line-height:1;">H</td>
           <td style="padding-left:8px;color:${ICON_BLUE};font-size:15px;font-weight:900;line-height:1.05;">

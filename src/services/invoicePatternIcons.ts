@@ -3,11 +3,21 @@ import path from 'path';
 
 let cachedLogoDataUri: string | null = null;
 
+/** Invoice header logo — cropped horizontal asset (not the square 3000×3000 master). */
+export const LOGO_INVOICE = {
+  nativeWidth: 1000,
+  nativeHeight: 733,
+  displayWidth: 210,
+  displayHeight: Math.round(210 * (733 / 1000)),
+};
+
 /** Embed logo as data URI so html2pdf never depends on CORS/static URLs. */
 export function getLogoDataUri(): string {
   if (cachedLogoDataUri) return cachedLogoDataUri;
   const candidates = [
+    path.join(__dirname, '../../assets/huffaz-holiday-logo-invoice.png'),
     path.join(__dirname, '../../assets/huffaz-holiday-logo.png'),
+    path.join(__dirname, '../../../frontend/public/huffaz-holiday-logo-invoice.png'),
     path.join(__dirname, '../../../frontend/public/huffaz-holiday-logo.png'),
   ];
   for (const logoPath of candidates) {
@@ -17,6 +27,22 @@ export function getLogoDataUri(): string {
     }
   }
   return '';
+}
+
+/** Render a crisp, aspect-correct logo block for PDF headers. */
+export function logoHtml(alt: string): string {
+  const src = getLogoDataUri();
+  if (!src) return '';
+  const { displayWidth, displayHeight } = LOGO_INVOICE;
+  return `<img
+    src="${src}"
+    alt="${alt}"
+    width="${displayWidth}"
+    height="${displayHeight}"
+    style="width:${displayWidth}px;height:${displayHeight}px;max-width:100%;object-fit:contain;object-position:left top;display:block;border:0;image-rendering:auto;-webkit-print-color-adjust:exact;print-color-adjust:exact;"
+    decoding="sync"
+    loading="eager"
+  />`;
 }
 
 const NAVY = '#063d79';
