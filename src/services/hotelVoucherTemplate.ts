@@ -1,43 +1,88 @@
-import prisma from '../config/database';
-import { logoHtml, BRAND_NAME } from './documentBrand';
+import fs from 'fs';
+import path from 'path';
 import { escapeHtml } from '../utils/exportHelpers';
+import { BRAND_NAME } from './documentBrand';
+
+type DetailMap = Record<string, unknown>;
 
 type HotelTableRow = {
   qty: string;
   roomType: string;
   checkIn: string;
   checkOut: string;
-  nights: number;
+  nights: string;
   confirmation: string;
   view: string;
   mealPlan: string;
   hotelName: string;
-  vendorCode: string;
 };
+
+const NAVY = '#1e2a78';
+const LINE = '#9a9a9a';
+const TEXT = '#000000';
+const MUTED = '#666666';
+const NOTE = '#333333';
+const FOOTER_ADDRESS = '243 TIP, Main Boulevard Near Defence Road, Lahore';
+const FOOTER_PHONE = '+92 320 4455954';
+const FOOTER_EMAIL = 'huffazholiday@gmail.com';
+const FOOTER_WEB = 'www.huffazholiday.com';
+const KSA_HELPLINE = '+966 59 129 1840';
+
+const STANDARD_REMARKS = [
+  'We hope the reservation is in accordance with your request.',
+  'Any amendment to the booking is subject to availability.',
+  'Cancellation Policy - The booking is non-refundable once confirmed on a definite basis.',
+  'Check-in after 16:00 hours and check-out at 12:00 hours.',
+];
+
+let cachedSquareLogo: string | null | undefined;
+
+function squareLogoDataUri(): string {
+  if (cachedSquareLogo !== undefined) return cachedSquareLogo || '';
+  const candidates = [
+    path.join(__dirname, '../../assets/huffaz-holiday-logo.png'),
+    path.join(__dirname, '../../../frontend/public/huffaz-holiday-logo.png'),
+  ];
+  for (const logoPath of candidates) {
+    if (fs.existsSync(logoPath)) {
+      cachedSquareLogo = `data:image/png;base64,${fs.readFileSync(logoPath).toString('base64')}`;
+      return cachedSquareLogo;
+    }
+  }
+  cachedSquareLogo = '';
+  return '';
+}
+
+function text(value: unknown): string {
+  return value == null ? '' : String(value).trim();
+}
 
 function formatDisplayDate(value?: string | Date | null): string {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-function nightsBetween(checkIn?: string, checkOut?: string): number {
+function nightsBetween(checkIn?: string | Date | null, checkOut?: string | Date | null): number {
   if (!checkIn || !checkOut) return 0;
-  const a = new Date(checkIn);
-  const b = new Date(checkOut);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 0;
-  const diff = Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
-  return diff > 0 ? diff : 0;
+  const from = checkIn instanceof Date ? checkIn : new Date(checkIn);
+  const to = checkOut instanceof Date ? checkOut : new Date(checkOut);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 0;
+  return Math.max(0, Math.round((to.getTime() - from.getTime()) / 86_400_000));
 }
 
-async function collectHotelRows(
+function rowsOf(details: DetailMap): DetailMap[] {
+  return Array.isArray(details.rows) && details.rows.length
+    ? details.rows.filter((row): row is DetailMap => !!row && typeof row === 'object')
+    : [details];
+}
+
+function collectHotelRows(
   booking: {
     serviceItems?: Array<{
       serviceType: string;
       description: string;
-      vendorId?: string | null;
-      vendor?: { vendorCode?: string | null } | null;
       details?: unknown;
     }>;
   } | null | undefined,
@@ -47,77 +92,54 @@ async function collectHotelRows(
     checkOutDate?: Date | null;
     roomDetails?: string | null;
   }
-): Promise<HotelTableRow[]> {
-  const items = (booking?.serviceItems || []).filter((i) => i.serviceType === 'HOTEL');
+): HotelTableRow[] {
+  const items = (booking?.serviceItems || []).filter((item) => item.serviceType === 'HOTEL');
   const rows: HotelTableRow[] = [];
-  const vendorIds = new Set<string>();
 
   for (const item of items) {
-    const details = (item.details as Record<string, unknown> | null) || {};
-    const rowList = Array.isArray(details.rows) && details.rows.length > 0
-      ? (details.rows as Record<string, string>[])
-      : [details as Record<string, string>];
-
-    for (const row of rowList) {
-      const vendorId = row.vendorId || item.vendorId;
-      if (vendorId) vendorIds.add(vendorId);
-    }
-  }
-
-  const vendors = vendorIds.size
-    ? await prisma.vendor.findMany({ where: { id: { in: [...vendorIds] } } })
-    : [];
-  const vendorMap = new Map(vendors.map((v) => [v.id, v]));
-
-  for (const item of items) {
-    const details = (item.details as Record<string, unknown> | null) || {};
-    const rowList = Array.isArray(details.rows) && details.rows.length > 0
-      ? (details.rows as Record<string, string>[])
-      : [details as Record<string, string>];
-
-    for (const row of rowList) {
-      const vendorId = row.vendorId || item.vendorId;
-      const vendor = vendorId ? vendorMap.get(vendorId) : item.vendor;
-      const checkIn = row.checkInDate || '';
-      const checkOut = row.checkOutDate || '';
-
+    const details = (item.details as DetailMap | null) || {};
+    for (const row of rowsOf(details)) {
+      const checkIn = text(row.checkInDate || details.checkInDate) || fallback.checkInDate;
+      const checkOut = text(row.checkOutDate || details.checkOutDate) || fallback.checkOutDate;
+      const nights = nightsBetween(checkIn, checkOut);
       rows.push({
-        qty: row.numRooms || '1',
-        roomType: row.roomType || fallback.roomDetails || '',
-        checkIn: formatDisplayDate(checkIn || fallback.checkInDate),
-        checkOut: formatDisplayDate(checkOut || fallback.checkOutDate),
-        nights: nightsBetween(checkIn, checkOut) || nightsBetween(
-          fallback.checkInDate?.toISOString(),
-          fallback.checkOutDate?.toISOString()
-        ),
-        confirmation: row.vendorResNo || String(details.vendorResNo || ''),
-        view: row.view || 'Standard',
-        mealPlan: row.mealPlan || 'RO',
-        hotelName: row.hotelName || String(details.hotelName || fallback.hotelName || item.description || ''),
-        vendorCode: vendor?.vendorCode || '',
+        qty: text(row.numRooms) || '1',
+        roomType: text(row.roomType || details.roomType || fallback.roomDetails),
+        checkIn: formatDisplayDate(checkIn),
+        checkOut: formatDisplayDate(checkOut),
+        nights: nights ? String(nights) : '',
+        confirmation: text(row.vendorResNo || details.vendorResNo),
+        view: text(row.view || details.view),
+        mealPlan: text(row.mealPlan || details.mealPlan),
+        hotelName: text(row.hotelName || details.hotelName || fallback.hotelName || item.description),
       });
     }
   }
 
   if (rows.length === 0 && (fallback.hotelName || fallback.checkInDate)) {
+    const nights = nightsBetween(fallback.checkInDate, fallback.checkOutDate);
     rows.push({
       qty: '1',
-      roomType: fallback.roomDetails || '',
+      roomType: text(fallback.roomDetails),
       checkIn: formatDisplayDate(fallback.checkInDate),
       checkOut: formatDisplayDate(fallback.checkOutDate),
-      nights: nightsBetween(
-        fallback.checkInDate?.toISOString(),
-        fallback.checkOutDate?.toISOString()
-      ),
+      nights: nights ? String(nights) : '',
       confirmation: '',
-      view: 'Standard',
-      mealPlan: 'RO',
-      hotelName: fallback.hotelName || '',
-      vendorCode: '',
+      view: '',
+      mealPlan: '',
+      hotelName: text(fallback.hotelName),
     });
   }
 
   return rows;
+}
+
+function field(label: string, value: string): string {
+  return `<span style="font-weight:700;">${escapeHtml(label)}</span> <span style="font-weight:700;">${escapeHtml(value)}</span>`;
+}
+
+function tableCell(value: string, extra = ''): string {
+  return `<td style="border:1px solid #000;padding:6px 4px;text-align:center;font-size:13px;color:${TEXT};${extra}">${escapeHtml(value)}</td>`;
 }
 
 export async function renderHotelDefiniteConfirmationHtml(
@@ -135,6 +157,7 @@ export async function renderHotelDefiniteConfirmationHtml(
       adults?: number;
       children?: number;
       infants?: number;
+      notes?: string | null;
       createdBy?: { firstName?: string; lastName?: string; phone?: string | null } | null;
       customer?: {
         customerType?: string;
@@ -146,129 +169,147 @@ export async function renderHotelDefiniteConfirmationHtml(
       serviceItems?: Array<{
         serviceType: string;
         description: string;
-        vendorId?: string | null;
-        vendor?: { vendorCode?: string | null } | null;
         details?: unknown;
       }>;
     } | null;
-  },
-  baseUrl?: string
+  }
 ): Promise<string> {
   const booking = voucher.booking;
   const customer = booking?.customer;
   const isB2B = customer?.customerType === 'B2B' && !!customer.companyName;
-
-  const hotelRows = await collectHotelRows(booking, {
+  const hotelRows = collectHotelRows(booking, {
     hotelName: voucher.hotelName,
     checkInDate: voucher.checkInDate,
     checkOutDate: voucher.checkOutDate,
     roomDetails: voucher.roomDetails,
   });
 
-  const primaryHotel = hotelRows[0]?.hotelName || voucher.hotelName || '';
   const guestName = booking?.guestName
     || (customer && customer.customerType !== 'B2B'
       ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim()
-      : voucher.guestName);
-
+      : '')
+    || voucher.guestName;
+  const toLine = isB2B ? customer!.companyName! : guestName;
+  const attLine = isB2B ? (customer!.contactPerson || guestName) : guestName;
+  const primaryHotel = hotelRows[0]?.hotelName || voucher.hotelName || '';
   const totalPax = (booking?.adults ?? 0) + (booking?.children ?? 0) + (booking?.infants ?? 0);
   const resNo = booking?.bookingNumber || voucher.voucherNumber;
   const printDate = formatDisplayDate(voucher.issuedAt || new Date());
-  const docDate = formatDisplayDate(new Date());
-
-  const toLine = isB2B ? customer!.companyName! : guestName;
-  const attLine = isB2B
-    ? (customer!.contactPerson || '')
-    : '';
-
-  const vendorCodes = [...new Set(hotelRows.map((r) => r.vendorCode).filter(Boolean))];
-  const remarks = vendorCodes.join(', ');
-
-  const tableBody = hotelRows.map((r) => `
-    <tr>
-      <td>${escapeHtml(r.qty)}</td>
-      <td>${escapeHtml(r.roomType)}</td>
-      <td>${escapeHtml(r.checkIn)}</td>
-      <td>${escapeHtml(r.checkOut)}</td>
-      <td style="text-align:center">${r.nights || ''}</td>
-      <td>${escapeHtml(r.confirmation)}</td>
-      <td>${escapeHtml(r.view)}</td>
-      <td>${escapeHtml(r.mealPlan)}</td>
-    </tr>`).join('');
-
+  const remarksValue = text(booking?.notes);
   const staff = booking?.createdBy
     ? `${booking.createdBy.firstName || ''} ${booking.createdBy.lastName || ''}`.trim()
     : '';
-  const staffPhone = booking?.createdBy?.phone || '';
+  const staffPhone = text(booking?.createdBy?.phone);
+  const logo = squareLogoDataUri();
+
+  const tableBody = hotelRows.map((row) => `
+    <tr>
+      ${tableCell(row.qty, 'width:7%;')}
+      ${tableCell(row.roomType, 'width:15%;')}
+      ${tableCell(row.checkIn, 'width:13%;')}
+      ${tableCell(row.checkOut, 'width:13%;')}
+      ${tableCell(row.nights, 'width:10%;')}
+      ${tableCell(row.confirmation, 'width:16%;')}
+      ${tableCell(row.view, 'width:13%;')}
+      ${tableCell(row.mealPlan, 'width:13%;')}
+    </tr>`).join('');
+
+  const remarkItems = STANDARD_REMARKS.map((note) => `
+    <tr>
+      <td valign="top" style="width:16px;padding:7px 8px 6px 0;">
+        <div style="width:5px;height:5px;background:${NOTE};"></div>
+      </td>
+      <td style="padding:0 0 8px;color:${NOTE};font-size:13px;line-height:1.45;">${escapeHtml(note)}</td>
+    </tr>`).join('');
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Definite Confirmation ${escapeHtml(voucher.voucherNumber)}</title>
 <style>
-  @page { size: A4; margin: 16mm; }
-  body { font-family: Arial, Helvetica, sans-serif; color: #1e293b; font-size: 12px; margin: 0; padding: 24px; }
-  .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; font-size: 12px; }
-  .meta-grid div { display: flex; gap: 8px; }
-  .meta-grid label { font-weight: 700; min-width: 72px; }
-  .brand { text-align: right; }
-  .brand img { max-height: 64px; max-width: 180px; object-fit: contain; }
-  .brand h1 { margin: 4px 0 0; font-size: 18px; color: #1d4ed8; letter-spacing: 0.5px; }
-  .brand p { margin: 2px 0 0; font-size: 11px; color: #475569; font-weight: 700; }
-  .intro { margin: 14px 0; font-size: 12px; }
-  .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 32px; margin: 12px 0 18px; }
-  .summary div { display: flex; gap: 8px; }
-  .summary label { font-weight: 700; min-width: 88px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
-  th { background: #1e3a8a; color: #fff; padding: 8px 6px; text-align: left; font-weight: 700; }
-  td { border: 1px solid #cbd5e1; padding: 7px 6px; vertical-align: top; }
-  .remarks { margin-top: 18px; }
-  .remarks label { font-weight: 700; display: block; margin-bottom: 4px; }
-  .footer { margin-top: 28px; display: flex; justify-content: space-between; gap: 24px; font-size: 11px; }
-  .footer-bar { margin-top: 20px; border-top: 3px solid #1e3a8a; padding-top: 10px; text-align: center; font-size: 10px; color: #334155; line-height: 1.5; }
-  .helpline { font-weight: 700; color: #1e3a8a; }
-</style></head><body>
-<div class="top">
-  <div class="meta-grid">
-    <div><label>Date:</label><span>${escapeHtml(docDate)}</span></div>
-    <div><label>To:</label><span>${escapeHtml(toLine)}</span></div>
-    <div><label>Att:</label><span>${escapeHtml(attLine)}</span></div>
-  </div>
-  <div class="brand">
-    ${logoHtml(baseUrl, BRAND_NAME)}
-    <h1>${escapeHtml(BRAND_NAME.toUpperCase())}</h1>
-    <p>Definite Confirmation</p>
-  </div>
-</div>
-<p class="intro">Thank you for considering ${escapeHtml(BRAND_NAME)} as your travel partner.</p>
-<div class="summary">
-  <div><label>Res No:</label><span>${escapeHtml(resNo)}</span></div>
-  <div><label>Hotel Name:</label><span>${escapeHtml(primaryHotel)}</span></div>
-  <div><label>Guest Name:</label><span>${escapeHtml(guestName)}</span></div>
-  <div><label>Total PAX:</label><span>${totalPax || ''}</span></div>
-</div>
-<table>
-  <thead>
-    <tr>
-      <th>QTY</th><th>Room Type</th><th>Checkin</th><th>Checkout</th><th>Nights</th><th>Confirmation</th><th>View</th><th>Meal Plan</th>
-    </tr>
-  </thead>
-  <tbody>${tableBody || '<tr><td colspan="8" style="text-align:center;color:#64748b">No room details</td></tr>'}</tbody>
+  @page { size: A4 portrait; margin: 12mm 14mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; background: #fff; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
+  img { border: 0; }
+</style>
+</head>
+<body>
+<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;">
+  <tr>
+    <td style="padding:22px 28px 16px;position:relative;">
+      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:248px;width:280px;height:280px;margin-left:-140px;opacity:0.08;pointer-events:none;" />` : ''}
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+        <tr>
+          <td width="58%" valign="top" style="width:58%;vertical-align:top;font-size:13px;line-height:1.55;color:${TEXT};">
+            ${field('Date:', printDate)}<br>
+            ${field('To:', toLine)}<br>
+            ${field('Att:', attLine)}
+          </td>
+          <td width="42%" valign="top" align="right" style="width:42%;vertical-align:top;text-align:right;">
+            <table cellpadding="0" cellspacing="0" align="right" style="border-collapse:collapse;">
+              <tr><td align="center" style="text-align:center;">
+                ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="48" height="48" style="width:48px;height:48px;object-fit:contain;display:block;margin:0 auto 2px;" />` : ''}
+                <div style="font-size:15px;font-weight:700;letter-spacing:0.3px;color:${TEXT};line-height:1.2;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
+                <div style="font-size:11px;font-weight:400;color:${TEXT};margin-top:2px;">Definite Confirmation</div>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+
+      <div style="border-top:1px solid ${LINE};margin:10px 0 14px;"></div>
+
+      <div style="font-size:13px;color:${TEXT};margin-bottom:16px;">Thank you for considering ${escapeHtml(BRAND_NAME)} as your travel partner.</div>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;">
+        <tr>
+          <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Res No:', resNo)}</td>
+          <td width="50%" style="width:50%;padding:6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Hotel Name:', primaryHotel)}</td>
+        </tr>
+        <tr>
+          <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Guest Name:', guestName)}</td>
+          <td width="50%" style="width:50%;padding:6px 0;font-size:15px;font-weight:700;color:${TEXT};">${field('Total PAX:', totalPax ? String(totalPax) : '')}</td>
+        </tr>
+      </table>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;table-layout:fixed;">
+        <thead>
+          <tr>
+            ${['QTY', 'Room Type', 'Checkin', 'Checkout', 'Nights', 'Confirmation', 'View', 'Meal Plan'].map((header) =>
+              `<th style="background:${NAVY};color:#fff;font-size:13px;font-weight:700;padding:7px 4px;text-align:center;border:1px solid #000;">${header}</th>`
+            ).join('')}
+          </tr>
+        </thead>
+        <tbody>${tableBody || `<tr><td colspan="8" style="border:1px solid #000;padding:8px;text-align:center;color:#94a3b8;">No room details</td></tr>`}</tbody>
+      </table>
+
+      <div style="margin-top:12px;font-size:12px;font-style:italic;font-weight:700;color:${MUTED};">
+        Remarks:${remarksValue ? ` ${escapeHtml(remarksValue)}` : ''}
+      </div>
+      <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:10px;">
+        ${remarkItems}
+      </table>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:36px;">
+        <tr>
+          <td width="50%" valign="top" style="width:50%;vertical-align:top;font-size:15px;color:${TEXT};line-height:1.45;">
+            <div style="font-weight:700;">KSA HELPLINE:</div>
+            <div>${escapeHtml(KSA_HELPLINE)}</div>
+          </td>
+          <td width="50%" valign="top" align="right" style="width:50%;vertical-align:top;text-align:right;font-size:15px;color:${TEXT};line-height:1.45;">
+            <div style="font-weight:700;">Thanks &amp; Regards</div>
+            ${staff ? `<div>${escapeHtml(staff)}</div>` : ''}
+            ${staffPhone ? `<div style="font-size:11px;font-weight:700;">Phone: ${escapeHtml(staffPhone)}</div>` : ''}
+            <div style="font-size:11px;font-weight:700;">Reservation Print Date: ${escapeHtml(printDate)}</div>
+          </td>
+        </tr>
+      </table>
+
+      <div style="margin-top:22px;font-size:11px;font-weight:700;color:${TEXT};line-height:1.6;">
+        ${escapeHtml(BRAND_NAME.toUpperCase())} - ${escapeHtml(FOOTER_ADDRESS)}<br>
+        <span style="font-weight:400;">&#128222; ${escapeHtml(FOOTER_PHONE)} &nbsp; | &nbsp; &#9993; ${escapeHtml(FOOTER_EMAIL)} &nbsp; | &nbsp; &#127760; ${escapeHtml(FOOTER_WEB)}</span>
+      </div>
+    </td>
+  </tr>
 </table>
-<div class="remarks">
-  <label>Remarks:</label>
-  <div>${escapeHtml(remarks)}</div>
-</div>
-<div class="footer">
-  <div><span class="helpline">KSA HELPLINE: +966 59 129 1840</span></div>
-  <div style="text-align:right">
-    <div>Thanks &amp; Regards</div>
-    ${staff ? `<div>${escapeHtml(staff)}</div>` : ''}
-    ${staffPhone ? `<div>${escapeHtml(staffPhone)}</div>` : ''}
-    <div>Reservation Print Date: ${escapeHtml(printDate)}</div>
-  </div>
-</div>
-<div class="footer-bar">
-  243 TIP, Main Boulevard Near Defence Road, Lahore | 042-36303030 - 0308-1114414 | huffazholiday@gmail.com | www.huffazholiday.com
-</div>
 </body></html>`;
 }
