@@ -186,8 +186,16 @@ export async function renderVoucherHtml(voucherId: string, format?: VoucherForma
   const fmt = format || voucher.voucherFormat;
   if (fmt === 'COMPLETE') {
     return renderCompletePackageHtml({
-      ...voucher,
-      documentTitle: 'Voucher',
+      voucherNumber: voucher.voucherNumber,
+      guestName: voucher.guestName,
+      documentKind: 'voucher',
+      hotelName: voucher.hotelName,
+      checkInDate: voucher.checkInDate,
+      checkOutDate: voucher.checkOutDate,
+      roomDetails: voucher.roomDetails,
+      issuedAt: voucher.issuedAt,
+      transportDetails: voucher.transportDetails,
+      booking: voucher.booking,
       invoice: voucher.invoice
         ? {
             invoiceNumber: voucher.invoice.invoiceNumber,

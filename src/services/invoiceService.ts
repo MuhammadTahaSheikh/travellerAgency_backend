@@ -260,13 +260,24 @@ export async function renderInvoiceHtml(invoiceId: string, _baseUrl?: string) {
   return renderCompletePackageHtml({
     voucherNumber: invoice.invoiceNumber,
     guestName: billTo || invoice.booking?.guestName || '',
-    documentTitle: 'Invoice',
+    documentKind: 'invoice',
     issuedAt: invoice.issueDate,
     booking: invoice.booking,
     invoice: {
       invoiceNumber: invoice.invoiceNumber,
+      issueDate: invoice.issueDate,
+      dueDate: invoice.dueDate,
+      subtotal: invoice.subtotal,
+      tax: invoice.tax,
+      discount: invoice.discount,
       totalAmount: invoice.totalAmount,
       paidAmount: invoice.paidAmount,
+      items: invoice.items.map((item) => ({
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        amount: item.amount,
+      })),
     },
   });
 }

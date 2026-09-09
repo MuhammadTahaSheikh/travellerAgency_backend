@@ -15,7 +15,7 @@ type ServiceItem = {
 export type CompletePackageDoc = {
   voucherNumber: string;
   guestName: string;
-  documentTitle?: string;
+  documentKind: 'invoice' | 'voucher';
   hotelName?: string | null;
   checkInDate?: Date | null;
   checkOutDate?: Date | null;
@@ -47,8 +47,19 @@ export type CompletePackageDoc = {
   } | null;
   invoice?: {
     invoiceNumber?: string;
+    issueDate?: Date | null;
+    dueDate?: Date | null;
+    subtotal?: unknown;
+    tax?: unknown;
+    discount?: unknown;
     totalAmount?: unknown;
     paidAmount?: unknown;
+    items?: Array<{
+      description: string;
+      quantity?: number;
+      unitPrice?: unknown;
+      amount?: unknown;
+    }>;
   } | null;
 };
 
@@ -259,7 +270,38 @@ function transportRows(items: ServiceItem[], fallback?: DetailMap): string[][] {
   return rows;
 }
 
-function pricingRows(doc: CompletePackageDoc): string[][] {
+function boldCell(label: string, value: string): string[] {
+  return [
+    `<span style="font-weight:700;">${label}</span>`,
+    `<span style="font-weight:700;">${value}</span>`,
+  ];
+}
+
+function invoicePricingRows(doc: CompletePackageDoc): string[][] {
+  const currency = doc.booking?.currency || 'PKR';
+  const invoice = doc.invoice;
+  const items = invoice?.items || [];
+  const rows: string[][] = [];
+
+  for (const item of items) {
+    const qty = Number(item.quantity) || 1;
+    const label = qty > 1 ? `${item.description || 'Service'} × ${qty}` : (item.description || 'Service');
+    rows.push([escapeHtml(label), money(item.amount ?? item.unitPrice, currency)]);
+  }
+
+  if (number(invoice?.subtotal)) rows.push(['Subtotal', money(invoice?.subtotal, currency)]);
+  if (number(invoice?.tax)) rows.push(['Tax', money(invoice?.tax, currency)]);
+  if (number(invoice?.discount)) rows.push(['Discount', money(invoice?.discount, currency)]);
+
+  const total = number(invoice?.totalAmount ?? doc.booking?.totalAmount);
+  const paid = number(invoice?.paidAmount);
+  rows.push(boldCell('Total Amount', money(total, currency)));
+  if (paid > 0) rows.push(['Paid', money(paid, currency)]);
+  rows.push(boldCell('Balance Due', money(Math.max(0, total - paid), currency)));
+  return rows.length ? rows : [boldCell('Total Amount', money(total, currency))];
+}
+
+function voucherPricingRows(doc: CompletePackageDoc): string[][] {
   const booking = doc.booking;
   const currency = booking?.currency || 'PKR';
   const total = number(doc.invoice?.totalAmount ?? booking?.totalAmount);
@@ -274,10 +316,7 @@ function pricingRows(doc: CompletePackageDoc): string[][] {
     if (adults > 0) rows.push(['Price per Adult', money(booking?.priceAdult, currency)]);
     if (children > 0) rows.push(['Price per Child', money(booking?.priceChild, currency)]);
     if (infants > 0) rows.push(['Price per Infant', money(booking?.priceInfant, currency)]);
-    rows.push([
-      `<span style="font-weight:700;">Total Price</span>`,
-      `<span style="font-weight:700;">${money(total, currency)}</span>`,
-    ]);
+    rows.push(boldCell('Total Price', money(total, currency)));
     return rows;
   }
 
@@ -285,11 +324,12 @@ function pricingRows(doc: CompletePackageDoc): string[][] {
     ['Total Package Amount', money(total, currency)],
     ['Advance Paid', money(paid, currency)],
     ['Balance Amount', money(Math.max(0, total - paid), currency)],
-    [
-      `<span style="font-weight:700;">Total Price</span>`,
-      `<span style="font-weight:700;">${money(total, currency)}</span>`,
-    ],
+    boldCell('Total Price', money(total, currency)),
   ];
+}
+
+function pricingRows(doc: CompletePackageDoc): string[][] {
+  return doc.documentKind === 'invoice' ? invoicePricingRows(doc) : voucherPricingRows(doc);
 }
 
 export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promise<string> {
@@ -301,8 +341,17 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
     || doc.guestName;
   const toLine = isB2B ? (customer!.companyName || guestName) : guestName;
   const firstName = (isB2B ? (customer?.contactPerson || guestName) : guestName).split(' ')[0] || guestName;
+  const isInvoice = doc.documentKind === 'invoice';
+  const title = isInvoice ? 'Invoice' : 'Voucher';
+  const numberLabel = isInvoice ? 'Invoice No' : 'Voucher No';
+  const docNumber = isInvoice
+    ? (doc.invoice?.invoiceNumber || doc.voucherNumber)
+    : doc.voucherNumber;
+  const dueDate = isInvoice ? formatDate(doc.invoice?.dueDate) : '';
+  const greeting = isInvoice
+    ? 'Following is the invoice for your booking. We hope it meets your requirement.'
+    : 'Following is the voucher for your booking. We hope it meets your requirement.';
   const printDate = formatDate(doc.issuedAt || new Date());
-  const title = doc.documentTitle || 'Invoice';
   const logo = logoDataUri();
   const adults = booking?.adults || 0;
   const children = booking?.children || 0;
@@ -377,7 +426,7 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
     : '';
 
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(doc.voucherNumber)}</title>
+<html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(docNumber)}</title>
 <style>
   @page { size: A4 portrait; margin: 12mm 12mm; background: #ffffff; }
   * { box-sizing: border-box; }
@@ -394,12 +443,13 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
         <tr>
           <td width="55%" valign="top" style="width:55%;vertical-align:top;font-size:14px;font-weight:700;color:${TEXT};line-height:1.8;">
             Date: ${escapeHtml(printDate)}<br>
-            To: ${escapeHtml(toLine)}
+            To: ${escapeHtml(toLine)}<br>
+            ${escapeHtml(numberLabel)}: ${escapeHtml(docNumber)}${dueDate ? `<br>Due Date: ${escapeHtml(dueDate)}` : ''}
           </td>
           <td width="45%" valign="top" align="right" style="width:45%;vertical-align:top;text-align:right;">
             ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="118" height="80" style="width:118px;height:80px;object-fit:contain;display:inline-block;" />` : ''}
             <div style="font-size:18px;font-weight:700;color:${TEXT};margin-top:4px;letter-spacing:0.2px;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
-            <div style="font-size:14px;font-weight:700;color:${TEXT};margin-top:2px;">${escapeHtml(title)}</div>
+            <div style="font-size:22px;font-weight:700;color:${NAVY};margin-top:4px;letter-spacing:0.4px;">${escapeHtml(title)}</div>
           </td>
         </tr>
       </table>
@@ -408,7 +458,7 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
 
       <div style="font-size:13px;color:${TEXT};line-height:1.7;">
         Dear ${escapeHtml(firstName)},<br><br>
-        Following is the invoice for your booking. We hope it meets your requirement.
+        ${escapeHtml(greeting)}
       </div>
 
       ${sectionTitle('Booking Summary')}
