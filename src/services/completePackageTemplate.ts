@@ -139,20 +139,37 @@ function money(value: unknown, currency = 'PKR'): string {
   })}/-`;
 }
 
+const TH = `background:${NAVY};color:#ffffff;font-size:13px;font-weight:700;padding:8px 6px;text-align:center;border:1px solid ${BORDER};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
+const TD = `border:1px solid ${BORDER};padding:8px 6px;font-size:13px;font-weight:400;color:${TEXT};background:${WHITE};`;
+
 function heading(title: string): string {
-  return `<h3>${escapeHtml(title)}</h3>`;
+  return `<div style="font-size:16px;font-weight:700;color:${TEXT};margin:18px 0 8px;font-family:Arial,Helvetica,sans-serif;">${escapeHtml(title)}</div>`;
 }
 
-function dataTable(headers: string[], rows: string[][], aligns?: Array<'left' | 'center' | 'right'>, fullWidth = false): string {
-  const body = rows.length
-    ? rows.map((row) => `<tr>${row.map((cell, index) => {
+function dataTable(
+  headers: string[],
+  rows: string[][],
+  aligns?: Array<'left' | 'center' | 'right'>,
+  options?: { width?: string; colWidths?: string[] }
+): string {
+  const width = options?.width || '70%';
+  const colgroup = options?.colWidths?.length
+    ? `<colgroup>${options.colWidths.map((w) => `<col style="width:${w};">`).join('')}</colgroup>`
+    : '';
+  const body = (rows.length ? rows : [headers.map(() => '-')]).map((row) =>
+    `<tr>${row.map((cell, index) => {
       const align = aligns?.[index] || 'left';
-      return `<td style="text-align:${align};">${cell}</td>`;
-    }).join('')}</tr>`).join('')
-    : `<tr><td colspan="${headers.length}">-</td></tr>`;
+      const colWidth = options?.colWidths?.[index] ? `width:${options.colWidths[index]};` : '';
+      return `<td style="${TD}${colWidth}text-align:${align};">${cell || '&nbsp;'}</td>`;
+    }).join('')}</tr>`
+  ).join('');
 
-  return `<table class="centered${fullWidth ? ' full' : ''}">
-    <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+  return `<table width="${width}" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:${width};max-width:750px;margin:8px 0 16px;background:${WHITE};table-layout:fixed;">
+    ${colgroup}
+    <thead><tr>${headers.map((header, index) => {
+      const colWidth = options?.colWidths?.[index] ? `width:${options.colWidths[index]};` : '';
+      return `<th style="${TH}${colWidth}">${escapeHtml(header)}</th>`;
+    }).join('')}</tr></thead>
     <tbody>${body}</tbody>
   </table>`;
 }
@@ -191,11 +208,15 @@ function ticketTable(items: ServiceItem[]): string {
     return dataTable(
       ['Airline Name', 'Sector', 'Departure Date', 'Return Date'],
       rows.map((row) => [escapeHtml(row.airline), escapeHtml(row.sector), escapeHtml(row.depart), escapeHtml(row.ret || '-')]),
+      ['left', 'center', 'center', 'center'],
+      { colWidths: ['28%', '24%', '24%', '24%'] },
     );
   }
   return dataTable(
     ['Airline Name', 'Sector', 'Date'],
     rows.map((row) => [escapeHtml(row.airline), escapeHtml(row.sector), escapeHtml(row.depart)]),
+    ['left', 'center', 'center'],
+    { colWidths: ['40%', '30%', '30%'] },
   );
 }
 
@@ -211,11 +232,14 @@ function visaTable(items: ServiceItem[]): string {
     return dataTable(
       ['Visa Type', 'Country'],
       rows.map((row) => [escapeHtml(row.visaType), escapeHtml(row.country || '-')]),
+      ['left', 'left'],
+      { colWidths: ['50%', '50%'] },
     );
   }
   return dataTable(
     ['Visa Type'],
     (rows.length ? rows : [{ visaType: 'Umrah', country: '' }]).map((row) => [escapeHtml(row.visaType)]),
+    ['left'],
   );
 }
 
@@ -297,7 +321,7 @@ function transportTable(items: ServiceItem[], fallback?: DetailMap): string {
     ]);
   }
   if (!rows.length) rows.push(['-', '-']);
-  return dataTable(['Sector', 'Transport Type'], rows);
+  return dataTable(['Sector', 'Transport Type'], rows, ['left', 'left'], { colWidths: ['50%', '50%'] });
 }
 
 function pricingTable(doc: CompletePackageDoc): string {
@@ -308,30 +332,27 @@ function pricingTable(doc: CompletePackageDoc): string {
   const children = booking?.children || 0;
   const infants = booking?.infants || 0;
   const determined = booking?.priceMode !== 'BREAKDOWN';
-  const rows: string[] = [];
+  const rows: string[][] = [];
 
   if (determined) {
     if (adults > 0 && number(booking?.priceAdult) > 0) {
-      rows.push(`<tr><td>Price per Adult</td><td style="text-align:right">${money(booking?.priceAdult, currency)}</td></tr>`);
+      rows.push(['Price per Adult', money(booking?.priceAdult, currency)]);
     }
     if (children > 0 && number(booking?.priceChild) > 0) {
-      rows.push(`<tr><td>Price per Child</td><td style="text-align:right">${money(booking?.priceChild, currency)}</td></tr>`);
+      rows.push(['Price per Child', money(booking?.priceChild, currency)]);
     }
     if (infants > 0 && number(booking?.priceInfant) > 0) {
-      rows.push(`<tr><td>Price per Infant</td><td style="text-align:right">${money(booking?.priceInfant, currency)}</td></tr>`);
+      rows.push(['Price per Infant', money(booking?.priceInfant, currency)]);
     }
-    rows.push(`<tr><td><strong>Total Price</strong></td><td style="text-align:right"><strong>${money(total, currency)}</strong></td></tr>`);
+    rows.push([`<strong>Total Price</strong>`, `<strong>${money(total, currency)}</strong>`]);
   } else {
     const paid = number(doc.invoice?.paidAmount);
-    rows.push(`<tr><td>Total Package Amount</td><td style="text-align:right">${money(total, currency)}</td></tr>`);
-    if (paid > 0) rows.push(`<tr><td>Advance Paid</td><td style="text-align:right">${money(paid, currency)}</td></tr>`);
-    rows.push(`<tr><td><strong>Total Price</strong></td><td style="text-align:right"><strong>${money(total, currency)}</strong></td></tr>`);
+    rows.push(['Total Package Amount', money(total, currency)]);
+    if (paid > 0) rows.push(['Advance Paid', money(paid, currency)]);
+    rows.push([`<strong>Total Price</strong>`, `<strong>${money(total, currency)}</strong>`]);
   }
 
-  return `<table class="centered">
-    <thead><tr><th>Description</th><th>Amount</th></tr></thead>
-    <tbody>${rows.join('')}</tbody>
-  </table>`;
+  return dataTable(['Description', 'Amount'], rows, ['left', 'right'], { colWidths: ['60%', '40%'] });
 }
 
 export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promise<string> {
@@ -384,157 +405,111 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
   const staffPhone = text(booking?.createdBy?.phone);
 
   const includeRows = (included.length ? included : ['-']).map((label) =>
-    `<tr><td>${escapeHtml(label)}</td></tr>`
+    `<tr><td style="${TD}">${escapeHtml(label)}</td></tr>`
   ).join('');
 
   const passengerRows = [
-    ...(adults > 0 ? [`<tr><td>Adults</td><td>${adults}</td></tr>`] : []),
-    ...(children > 0 ? [`<tr><td>Children</td><td>${children}</td></tr>`] : []),
-    ...(infants > 0 ? [`<tr><td>Infants</td><td>${infants}</td></tr>`] : []),
-    `<tr><td><strong>Total Pax</strong></td><td><strong>${totalPax}</strong></td></tr>`,
+    ...(adults > 0 ? [`<tr><td style="${TD}width:70%;">Adults</td><td style="${TD}width:30%;text-align:center;">${adults}</td></tr>`] : []),
+    ...(children > 0 ? [`<tr><td style="${TD}">Children</td><td style="${TD}text-align:center;">${children}</td></tr>`] : []),
+    ...(infants > 0 ? [`<tr><td style="${TD}">Infants</td><td style="${TD}text-align:center;">${infants}</td></tr>`] : []),
+    `<tr><td style="${TD}"><strong>Total Pax</strong></td><td style="${TD}text-align:center;"><strong>${totalPax}</strong></td></tr>`,
   ].join('');
 
   const hotelHtml = hotels.map((group) => {
     const cityPart = group.city ? ` (${escapeHtml(group.city)})` : '';
-    return `<div class="hotel-sector">
-      ${heading('Accommodation Details')}
-      <div class="hotel-title"><strong>Hotel Name:</strong> ${escapeHtml(group.name)}${cityPart}</div>
-      ${dataTable(['QTY', 'Room Type', 'Check In', 'Check Out', 'Nights', 'View', 'Meal Plan'], group.rows, ['center', 'center', 'center', 'center', 'center', 'center', 'center'], true)}
-    </div>`;
+    return `${heading('Accommodation Details')}
+      <div style="font-size:14px;font-weight:700;color:${TEXT};margin:0 0 8px;">Hotel Name: ${escapeHtml(group.name)}${cityPart}</div>
+      ${dataTable(
+        ['QTY', 'Room Type', 'Check In', 'Check Out', 'Nights', 'View', 'Meal Plan'],
+        group.rows,
+        ['center', 'center', 'center', 'center', 'center', 'center', 'center'],
+        { width: '100%', colWidths: ['8%', '16%', '16%', '16%', '10%', '17%', '17%'] },
+      )}`;
   }).join('');
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)} ${escapeHtml(doc.voucherNumber)}</title>
 <style>
-  @page { size: A4 portrait; margin: 10mm; }
+  @page { size: A4 portrait; margin: 10mm; background: #ffffff; }
   * { box-sizing: border-box; }
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #ffffff;
-    color: ${TEXT};
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: 14px;
-  }
-  #invoice-root { position: relative; padding: 8px 4px 12px; background: #ffffff; }
-  .quote-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px; }
-  .quote-left { line-height: 1.6; }
-  .quote-right { text-align: center; }
-  .quote-title { font-weight: 800; font-size: 20px; margin-top: 4px; color: ${TEXT}; }
-  .quote-intro { margin: 14px 0; font-size: 15px; }
-  h3 { font-size: 16px; font-weight: 700; margin: 18px 0 8px; color: ${TEXT}; }
-  .outer-box {
-    display: flex;
-    align-items: stretch;
-    border: 1px solid ${BOX_BORDER};
-    border-radius: 6px;
-    padding: 12px;
-    margin-bottom: 18px;
-    max-width: 1000px;
-  }
-  .outer-box .box { flex: 1; min-width: 0; display: flex; justify-content: center; }
-  .outer-box .box table { width: 100%; max-width: 380px; border-collapse: collapse; }
-  .outer-box .box table th, .outer-box .box table td {
-    border: 1px solid ${BORDER};
-    padding: 8px;
-    text-align: left;
-    background: ${WHITE};
-  }
-  .outer-box .divider { border-left: 1px solid ${BORDER}; margin: 0 12px; flex-shrink: 0; }
-  table.centered {
-    border-collapse: collapse;
-    margin: 12px 0;
-    width: 70%;
-    max-width: 750px;
-  }
-  table.centered.full { width: 100%; max-width: none; }
-  table.centered th, table.centered td {
-    border: 1px solid ${BORDER};
-    padding: 8px;
-    text-align: left;
-    background: ${WHITE};
-  }
-  table.centered thead th,
-  .outer-box .box table thead th {
-    background: ${NAVY} !important;
-    color: ${WHITE} !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  .hotel-sector { width: 100%; max-width: 1000px; margin: 18px 0; }
-  .hotel-sector table.centered { width: 100%; max-width: none; }
-  .hotel-sector th, .hotel-sector td { text-align: center; }
-  .hotel-title { margin-bottom: 8px; font-size: 14px; }
-  .quotation-closing { border-top: 6px solid ${NAVY}; margin-top: 18px; padding-top: 8px; }
-  .closing-signature { text-align: right; line-height: 1.35; }
-  .closing-company { margin-top: 24px; line-height: 1.5; font-size: 13px; }
+  html, body { margin: 0; padding: 0; background: #ffffff !important; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
   img { border: 0; }
 </style>
 </head>
-<body>
-<div id="invoice-root">
-  ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:38%;width:520px;margin-left:-260px;opacity:0.065;pointer-events:none;z-index:0;">` : ''}
-  <div style="position:relative;z-index:1;">
-    <div class="quote-header">
-      <div class="quote-left">
-        <div style="margin-top:10px;"><strong>Date:</strong> ${escapeHtml(printDate)}</div>
-        <div style="margin-top:8px;"><strong>To:</strong> ${escapeHtml(toLine)}</div>
-      </div>
-      <div class="quote-right">
-        ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" style="width:120px;height:auto;margin-bottom:6px;object-fit:contain;">` : ''}
-        <div class="quote-title">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
-        <div style="font-weight:700;margin-top:4px">${escapeHtml(title)}</div>
-      </div>
-    </div>
+<body style="background:#ffffff;margin:0;padding:0;">
+<table id="invoice-root" width="740" cellpadding="0" cellspacing="0" style="width:740px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;background:#ffffff;">
+  <tr>
+    <td style="padding:16px 18px 18px;position:relative;background:#ffffff;">
+      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:280px;width:360px;height:360px;margin-left:-180px;opacity:0.065;pointer-events:none;z-index:0;">` : ''}
 
-    <hr style="border:2px solid #000;margin:10px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;position:relative;z-index:1;">
+        <tr>
+          <td width="58%" valign="middle" style="width:58%;vertical-align:middle;font-size:14px;color:${TEXT};line-height:1.7;padding:8px 8px 8px 0;">
+            <div style="margin-top:10px;"><strong>Date:</strong> ${escapeHtml(printDate)}</div>
+            <div style="margin-top:8px;"><strong>To:</strong> ${escapeHtml(toLine)}</div>
+          </td>
+          <td width="42%" valign="middle" align="center" style="width:42%;vertical-align:middle;text-align:center;">
+            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="120" style="width:120px;height:auto;margin-bottom:6px;object-fit:contain;">` : ''}
+            <div style="font-weight:800;font-size:20px;color:${TEXT};margin-top:4px;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
+            <div style="font-weight:700;margin-top:4px;font-size:14px;">${escapeHtml(title)}</div>
+          </td>
+        </tr>
+      </table>
 
-    <div class="quote-intro">Dear ${escapeHtml(guestName)},<br><br>Following is the ${greetingKind} for your booking. We hope it meets your requirement.</div>
+      <hr style="border:2px solid #000;margin:10px 0;">
 
-    ${heading('Booking Summary')}
-    <div class="outer-box">
-      <div class="box">
-        <table>
-          <thead><tr><th>Booking Includes</th></tr></thead>
-          <tbody>${includeRows}</tbody>
-        </table>
-      </div>
-      <div class="divider" aria-hidden="true"></div>
-      <div class="box">
-        <table>
-          <thead><tr><th colspan="2" style="text-align:center">Passenger Details</th></tr></thead>
-          <tbody>${passengerRows}</tbody>
-        </table>
-      </div>
-    </div>
+      <div style="margin:14px 0;font-size:15px;color:${TEXT};line-height:1.6;">Dear ${escapeHtml(guestName)},<br><br>Following is the ${greetingKind} for your booking. We hope it meets your requirement.</div>
 
-    ${ticketItems.length ? `${heading('Ticket Details')}${ticketTable(ticketItems)}` : ''}
-    ${visaItems.length ? `${heading('Visa Details')}${visaTable(visaItems)}` : ''}
-    ${hotelHtml}
-    ${transportItems.length || transportFallback.sector || transportFallback.vehicleType
-      ? `${heading('Transport Details')}${transportTable(transportItems, transportFallback)}`
-      : ''}
-    ${heading('Pricing Details')}
-    ${pricingTable(doc)}
+      ${heading('Booking Summary')}
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${BOX_BORDER};margin:0 0 18px;background:${WHITE};">
+        <tr>
+          <td width="48%" valign="top" style="width:48%;vertical-align:top;padding:12px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+              <thead><tr><th style="${TH}text-align:left;">Booking Includes</th></tr></thead>
+              <tbody>${includeRows}</tbody>
+            </table>
+          </td>
+          <td width="4%" style="width:4%;border-left:1px solid ${BORDER};"></td>
+          <td width="48%" valign="top" style="width:48%;vertical-align:top;padding:12px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+              <thead><tr><th colspan="2" style="${TH}">Passenger Details</th></tr></thead>
+              <tbody>${passengerRows}</tbody>
+            </table>
+          </td>
+        </tr>
+      </table>
 
-    <footer class="quotation-closing">
-      <div class="closing-signature">
-        <strong>Thanks &amp; Regards</strong><br>
-        ${staff ? `${escapeHtml(staff)}<br>` : ''}
-        ${staffPhone ? `<strong>Phone:</strong> ${escapeHtml(staffPhone)}<br>` : ''}
-        <strong>Reservation Print Date:</strong> ${escapeHtml(printDate)}
-      </div>
-      <div class="closing-company">
+      ${ticketItems.length ? `${heading('Ticket Details')}${ticketTable(ticketItems)}` : ''}
+      ${visaItems.length ? `${heading('Visa Details')}${visaTable(visaItems)}` : ''}
+      ${hotelHtml}
+      ${transportItems.length || transportFallback.sector || transportFallback.vehicleType
+        ? `${heading('Transport Details')}${transportTable(transportItems, transportFallback)}`
+        : ''}
+      ${heading('Pricing Details')}
+      ${pricingTable(doc)}
+
+      <div style="border-top:6px solid ${NAVY};margin-top:18px;padding-top:8px;"></div>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+        <tr>
+          <td width="40%"></td>
+          <td width="60%" align="right" style="text-align:right;font-size:14px;color:${TEXT};line-height:1.35;">
+            <div style="font-weight:700;">Thanks &amp; Regards</div>
+            ${staff ? `<div>${escapeHtml(staff)}</div>` : ''}
+            ${staffPhone ? `<div><strong>Phone:</strong> ${escapeHtml(staffPhone)}</div>` : ''}
+            <div><strong>Reservation Print Date:</strong> ${escapeHtml(printDate)}</div>
+          </td>
+        </tr>
+      </table>
+      <div style="margin-top:24px;line-height:1.5;font-size:13px;color:${TEXT};">
         <strong>${escapeHtml(BRAND_NAME.toUpperCase())}</strong> - ${escapeHtml(FOOTER_ADDRESS)}<br>
         &#9742; ${escapeHtml(FOOTER_PHONE)} &nbsp; | &nbsp; &#9993; ${escapeHtml(FOOTER_EMAIL)} &nbsp; | &nbsp; ${escapeHtml(FOOTER_WEB)}
       </div>
-    </footer>
-  </div>
-</div>
+    </td>
+  </tr>
+</table>
 </body>
 </html>`;
 }
