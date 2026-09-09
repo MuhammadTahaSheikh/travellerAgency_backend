@@ -139,8 +139,8 @@ function money(value: unknown, currency = 'PKR'): string {
   })}/-`;
 }
 
-const TH = `background:${NAVY};color:#ffffff;font-size:13px;font-weight:700;padding:8px 6px;text-align:center;border:1px solid ${BORDER};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
-const TD = `border:1px solid ${BORDER};padding:8px 6px;font-size:13px;font-weight:400;color:${TEXT};background:${WHITE};`;
+const TH = `background:${NAVY};color:#ffffff;font-size:13px;font-weight:700;padding:8px 10px;text-align:left;border:1px solid ${BORDER};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
+const TD = `border:1px solid ${BORDER};padding:8px 10px;font-size:13px;font-weight:400;color:${TEXT};background:${WHITE};`;
 
 function heading(title: string): string {
   return `<div style="font-size:16px;font-weight:700;color:${TEXT};margin:18px 0 8px;font-family:Arial,Helvetica,sans-serif;">${escapeHtml(title)}</div>`;
@@ -164,7 +164,7 @@ function dataTable(
     }).join('')}</tr>`
   ).join('');
 
-  return `<table width="${width}" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:${width};max-width:750px;margin:8px 0 16px;background:${WHITE};table-layout:fixed;">
+  return `<table width="${width}" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:${width};max-width:750px;margin:8px 0 16px;background:${WHITE};">
     ${colgroup}
     <thead><tr>${headers.map((header, index) => {
       const colWidth = options?.colWidths?.[index] ? `width:${options.colWidths[index]};` : '';
@@ -208,15 +208,15 @@ function ticketTable(items: ServiceItem[]): string {
     return dataTable(
       ['Airline Name', 'Sector', 'Departure Date', 'Return Date'],
       rows.map((row) => [escapeHtml(row.airline), escapeHtml(row.sector), escapeHtml(row.depart), escapeHtml(row.ret || '-')]),
-      ['left', 'center', 'center', 'center'],
-      { colWidths: ['28%', '24%', '24%', '24%'] },
+      ['left', 'left', 'left', 'left'],
+      { colWidths: ['40%', '20%', '20%', '20%'] },
     );
   }
   return dataTable(
     ['Airline Name', 'Sector', 'Date'],
     rows.map((row) => [escapeHtml(row.airline), escapeHtml(row.sector), escapeHtml(row.depart)]),
-    ['left', 'center', 'center'],
-    { colWidths: ['40%', '30%', '30%'] },
+    ['left', 'left', 'left'],
+    { colWidths: ['50%', '30%', '20%'] },
   );
 }
 
@@ -422,8 +422,8 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
       ${dataTable(
         ['QTY', 'Room Type', 'Check In', 'Check Out', 'Nights', 'View', 'Meal Plan'],
         group.rows,
-        ['center', 'center', 'center', 'center', 'center', 'center', 'center'],
-        { width: '100%', colWidths: ['8%', '16%', '16%', '16%', '10%', '17%', '17%'] },
+        ['left', 'left', 'left', 'left', 'left', 'left', 'left'],
+        { width: '70%', colWidths: ['8%', '18%', '16%', '16%', '10%', '16%', '16%'] },
       )}`;
   }).join('');
 
