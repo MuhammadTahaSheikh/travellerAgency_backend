@@ -1,6 +1,7 @@
 import prisma from '../config/database';
 import { voucherNumberFromLinkedDocument } from './numberingService';
 import { VoucherFormat } from '@prisma/client';
+import { renderCompletePackageHtml } from './completePackageTemplate';
 import { renderDefiniteConfirmationHtml } from './hotelVoucherTemplate';
 
 function paymentStatusLabel(invoice: { totalAmount: unknown; paidAmount: unknown } | null | undefined) {
@@ -183,6 +184,19 @@ export async function renderVoucherHtml(voucherId: string, format?: VoucherForma
 
   if (!voucher) throw new Error('Voucher not found');
   const fmt = format || voucher.voucherFormat;
+  if (fmt === 'COMPLETE') {
+    return renderCompletePackageHtml({
+      ...voucher,
+      documentTitle: 'Voucher',
+      invoice: voucher.invoice
+        ? {
+            invoiceNumber: voucher.invoice.invoiceNumber,
+            totalAmount: voucher.invoice.totalAmount,
+            paidAmount: voucher.invoice.paidAmount,
+          }
+        : undefined,
+    });
+  }
   return renderDefiniteConfirmationHtml(voucher, fmt);
 }
 

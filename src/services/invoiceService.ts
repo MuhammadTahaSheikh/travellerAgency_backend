@@ -12,7 +12,7 @@ import {
   updateCustomerAccountLabel,
 } from './ledgerService';
 import { convertCurrency, getDefaultExchangeRate } from './currencyService';
-import { renderDefiniteConfirmationHtml } from './hotelVoucherTemplate';
+import { renderCompletePackageHtml } from './completePackageTemplate';
 import { createVendorPostingsFromBooking } from './vendorPostingService';
 import {
   createVendorAccount,
@@ -257,12 +257,18 @@ export async function renderInvoiceHtml(invoiceId: string, _baseUrl?: string) {
     ? invoice.customer.companyName
     : `${invoice.customer?.firstName || ''} ${invoice.customer?.lastName || ''}`.trim();
 
-  return renderDefiniteConfirmationHtml({
+  return renderCompletePackageHtml({
     voucherNumber: invoice.invoiceNumber,
     guestName: billTo || invoice.booking?.guestName || '',
+    documentTitle: 'Invoice',
     issuedAt: invoice.issueDate,
     booking: invoice.booking,
-  }, 'COMPLETE');
+    invoice: {
+      invoiceNumber: invoice.invoiceNumber,
+      totalAmount: invoice.totalAmount,
+      paidAmount: invoice.paidAmount,
+    },
+  });
 }
 
 export async function allocateVendorCosts(bookingId: string, tx?: TxClient) {
