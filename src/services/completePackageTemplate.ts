@@ -437,6 +437,7 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #ffffff !important; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
   img { border: 0; }
+  .keep-together { page-break-inside: avoid !important; break-inside: avoid !important; }
 </style>
 </head>
 <body style="background:#ffffff;margin:0;padding:0;">
@@ -491,22 +492,27 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
       ${heading('Pricing Details')}
       ${pricingTable(doc)}
 
-      <div style="border-top:6px solid ${NAVY};margin-top:18px;padding-top:8px;"></div>
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+      <table class="keep-together" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin-top:18px;page-break-inside:avoid;break-inside:avoid;page-break-before:auto;">
         <tr>
-          <td width="40%"></td>
-          <td width="60%" align="right" style="text-align:right;font-size:14px;color:${TEXT};line-height:1.35;">
-            <div style="font-weight:700;">Thanks &amp; Regards</div>
-            ${staff ? `<div>${escapeHtml(staff)}</div>` : ''}
-            ${staffPhone ? `<div><strong>Phone:</strong> ${escapeHtml(staffPhone)}</div>` : ''}
-            <div><strong>Reservation Print Date:</strong> ${escapeHtml(printDate)}</div>
+          <td style="border-top:6px solid ${NAVY};padding-top:10px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+              <tr>
+                <td width="40%"></td>
+                <td width="60%" align="right" style="text-align:right;font-size:14px;color:${TEXT};line-height:1.45;">
+                  <div style="font-weight:700;">Thanks &amp; Regards</div>
+                  ${staff ? `<div>${escapeHtml(staff)}</div>` : ''}
+                  ${staffPhone ? `<div><strong>Phone:</strong> ${escapeHtml(staffPhone)}</div>` : ''}
+                  <div><strong>Reservation Print Date:</strong> ${escapeHtml(printDate)}</div>
+                </td>
+              </tr>
+            </table>
+            <div style="margin-top:16px;line-height:1.5;font-size:13px;color:${TEXT};">
+              <strong>${escapeHtml(BRAND_NAME.toUpperCase())}</strong> - ${escapeHtml(FOOTER_ADDRESS)}<br>
+              &#9742; ${escapeHtml(FOOTER_PHONE)} &nbsp; | &nbsp; &#9993; ${escapeHtml(FOOTER_EMAIL)} &nbsp; | &nbsp; ${escapeHtml(FOOTER_WEB)}
+            </div>
           </td>
         </tr>
       </table>
-      <div style="margin-top:24px;line-height:1.5;font-size:13px;color:${TEXT};">
-        <strong>${escapeHtml(BRAND_NAME.toUpperCase())}</strong> - ${escapeHtml(FOOTER_ADDRESS)}<br>
-        &#9742; ${escapeHtml(FOOTER_PHONE)} &nbsp; | &nbsp; &#9993; ${escapeHtml(FOOTER_EMAIL)} &nbsp; | &nbsp; ${escapeHtml(FOOTER_WEB)}
-      </div>
     </td>
   </tr>
 </table>
