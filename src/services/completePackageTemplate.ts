@@ -140,16 +140,19 @@ function money(value: unknown, currency = 'PKR'): string {
 }
 
 function dataTable(headers: string[], rows: string[][], aligns?: Array<'left' | 'center' | 'right'>): string {
+  const compact = headers.length >= 5;
+  const fontSize = compact ? '11px' : '12px';
+  const padding = compact ? '6px 3px' : '7px 6px';
   const body = rows.length
     ? rows.map((row) => `<tr>${row.map((cell, index) => {
       const align = aligns?.[index] || 'center';
-      return `<td style="border:1px solid ${BORDER};padding:8px 6px;text-align:${align};font-size:13px;font-weight:400;color:${TEXT};background:transparent;">${cell}</td>`;
+      return `<td style="border:1px solid ${BORDER};padding:${padding};text-align:${align};font-size:${fontSize};font-weight:400;color:${TEXT};background:transparent;word-wrap:break-word;overflow-wrap:break-word;">${cell}</td>`;
     }).join('')}</tr>`).join('')
     : `<tr><td colspan="${headers.length}" style="border:1px solid ${BORDER};padding:8px;text-align:center;color:#94a3b8;background:${WHITE};">—</td></tr>`;
 
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:8px 0 18px;background:${WHITE};">
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;max-width:100%;margin:8px 0 16px;background:${WHITE};">
     <thead><tr>${headers.map((header) =>
-      `<th style="background:${NAVY};color:${WHITE};font-size:13px;font-weight:700;padding:10px 6px;text-align:center;border:1px solid ${BORDER};">${escapeHtml(header)}</th>`
+      `<th style="background:${NAVY};color:${WHITE};font-size:${fontSize};font-weight:700;padding:${padding};text-align:center;border:1px solid ${BORDER};word-wrap:break-word;">${escapeHtml(header)}</th>`
     ).join('')}</tr></thead>
     <tbody>${body}</tbody>
   </table>`;
@@ -421,35 +424,36 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
   }).join('');
 
   const watermark = logo
-    ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:280px;width:380px;height:380px;margin-left:-190px;opacity:0.09;pointer-events:none;z-index:0;" />
-       <img src="${logo}" alt="" style="position:absolute;left:50%;top:920px;width:340px;height:340px;margin-left:-170px;opacity:0.08;pointer-events:none;z-index:0;" />`
+    ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:260px;width:280px;height:280px;margin-left:-140px;opacity:0.09;pointer-events:none;z-index:0;" />
+       <img src="${logo}" alt="" style="position:absolute;left:50%;top:900px;width:240px;height:240px;margin-left:-120px;opacity:0.08;pointer-events:none;z-index:0;" />`
     : '';
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(docNumber)}</title>
 <style>
-  @page { size: A4 portrait; margin: 12mm 12mm; background: #ffffff; }
+  @page { size: A4 portrait; margin: 10mm; background: #ffffff; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: #ffffff !important; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
-  img { border: 0; }
+  html, body { margin: 0; padding: 0; width: 100%; max-width: 100%; overflow: hidden; background: #ffffff !important; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
+  table { max-width: 100%; }
+  img { border: 0; max-width: 100%; }
 </style>
 </head>
-<body style="background:#ffffff;margin:0;padding:0;">
-<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;background:#ffffff;">
+<body style="background:#ffffff;margin:0;padding:0;width:100%;max-width:100%;overflow:hidden;">
+<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:100%;margin:0 auto;border-collapse:collapse;table-layout:fixed;position:relative;background:#ffffff;">
   <tr>
-    <td style="padding:18px 22px 16px;position:relative;background:#ffffff;">
+    <td style="padding:12px 10px 12px;position:relative;background:#ffffff;">
       ${watermark}
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
         <tr>
-          <td width="55%" valign="top" style="width:55%;vertical-align:top;font-size:14px;font-weight:700;color:${TEXT};line-height:1.8;">
+          <td width="58%" valign="top" style="width:58%;vertical-align:top;font-size:13px;font-weight:700;color:${TEXT};line-height:1.7;padding-right:8px;">
             Date: ${escapeHtml(printDate)}<br>
             To: ${escapeHtml(toLine)}<br>
             ${escapeHtml(numberLabel)}: ${escapeHtml(docNumber)}${dueDate ? `<br>Due Date: ${escapeHtml(dueDate)}` : ''}
           </td>
-          <td width="45%" valign="top" align="right" style="width:45%;vertical-align:top;text-align:right;">
-            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="118" height="80" style="width:118px;height:80px;object-fit:contain;display:inline-block;" />` : ''}
-            <div style="font-size:18px;font-weight:700;color:${TEXT};margin-top:4px;letter-spacing:0.2px;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
-            <div style="font-size:22px;font-weight:700;color:${NAVY};margin-top:4px;letter-spacing:0.4px;">${escapeHtml(title)}</div>
+          <td width="42%" valign="top" align="right" style="width:42%;vertical-align:top;text-align:right;overflow:hidden;">
+            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="96" height="64" style="width:96px;height:64px;object-fit:contain;display:inline-block;" />` : ''}
+            <div style="font-size:15px;font-weight:700;color:${TEXT};margin-top:4px;line-height:1.2;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
+            <div style="font-size:18px;font-weight:700;color:${NAVY};margin-top:3px;line-height:1.2;">${escapeHtml(title)}</div>
           </td>
         </tr>
       </table>
@@ -462,19 +466,19 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
       </div>
 
       ${sectionTitle('Booking Summary')}
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;background:${SUMMARY_BG};">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;background:${SUMMARY_BG};">
         <tr>
-          <td style="padding:12px;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+          <td style="padding:10px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
               <tr>
-                <td width="48%" valign="top" style="width:48%;vertical-align:top;padding-right:10px;">
-                  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+                <td width="48%" valign="top" style="width:48%;vertical-align:top;padding-right:8px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
                     <tr><th style="background:${NAVY};color:${WHITE};font-size:14px;font-weight:700;padding:10px;text-align:left;border:1px solid ${BORDER};">Booking Includes</th></tr>
                     ${includeRows}
                   </table>
                 </td>
-                <td width="52%" valign="top" style="width:52%;vertical-align:top;padding-left:10px;">
-                  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+                <td width="52%" valign="top" style="width:52%;vertical-align:top;padding-left:8px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
                     <tr><th colspan="2" style="background:${NAVY};color:${WHITE};font-size:14px;font-weight:700;padding:10px;text-align:left;border:1px solid ${BORDER};">Passenger Details</th></tr>
                     ${passengerHtml}
                   </table>
@@ -493,10 +497,10 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
 
       <div style="border-top:5px solid ${NAVY};margin:22px 0 14px;"></div>
 
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
         <tr>
-          <td width="50%"></td>
-          <td width="50%" align="right" style="text-align:right;font-size:14px;color:${TEXT};line-height:1.55;">
+          <td width="42%"></td>
+          <td width="58%" align="right" style="text-align:right;font-size:13px;color:${TEXT};line-height:1.5;word-wrap:break-word;">
             <div style="font-weight:700;">Thanks &amp; Regards</div>
             ${staff ? `<div style="font-weight:400;">${escapeHtml(staff)}</div>` : ''}
             ${staffPhone ? `<div style="font-weight:700;">Phone: ${escapeHtml(staffPhone)}</div>` : ''}
