@@ -66,7 +66,7 @@ export type CompletePackageDoc = {
 const NAVY = '#242a70';
 const TEXT = '#222222';
 const BORDER = '#999999';
-const SUMMARY_BG = '#cccccc';
+const BOX_BORDER = '#cccccc';
 const WHITE = '#ffffff';
 const FOOTER_ADDRESS = '243 TIP, Main Boulevard Near Defence Road, Lahore';
 const FOOTER_PHONE = '+92 320 4455954';
@@ -133,64 +133,90 @@ function itemsOf(booking: CompletePackageDoc['booking'], type: string): ServiceI
 }
 
 function money(value: unknown, currency = 'PKR'): string {
-  return `${escapeHtml(currency)} ${number(value).toLocaleString('en-PK', {
+  return `${escapeHtml(currency)} ${number(value).toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}/-`;
 }
 
-function dataTable(headers: string[], rows: string[][], aligns?: Array<'left' | 'center' | 'right'>): string {
-  const compact = headers.length >= 5;
-  const fontSize = compact ? '11px' : '12px';
-  const padding = compact ? '6px 3px' : '7px 6px';
+function heading(title: string): string {
+  return `<h3>${escapeHtml(title)}</h3>`;
+}
+
+function dataTable(headers: string[], rows: string[][], aligns?: Array<'left' | 'center' | 'right'>, fullWidth = false): string {
   const body = rows.length
     ? rows.map((row) => `<tr>${row.map((cell, index) => {
-      const align = aligns?.[index] || 'center';
-      return `<td style="border:1px solid ${BORDER};padding:${padding};text-align:${align};font-size:${fontSize};font-weight:400;color:${TEXT};background:transparent;word-wrap:break-word;overflow-wrap:break-word;">${cell}</td>`;
+      const align = aligns?.[index] || 'left';
+      return `<td style="text-align:${align};">${cell}</td>`;
     }).join('')}</tr>`).join('')
-    : `<tr><td colspan="${headers.length}" style="border:1px solid ${BORDER};padding:8px;text-align:center;color:#94a3b8;background:${WHITE};">—</td></tr>`;
+    : `<tr><td colspan="${headers.length}">-</td></tr>`;
 
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;max-width:100%;margin:8px 0 16px;background:${WHITE};">
-    <thead><tr>${headers.map((header) =>
-      `<th style="background:${NAVY};color:${WHITE};font-size:${fontSize};font-weight:700;padding:${padding};text-align:center;border:1px solid ${BORDER};word-wrap:break-word;">${escapeHtml(header)}</th>`
-    ).join('')}</tr></thead>
+  return `<table class="centered${fullWidth ? ' full' : ''}">
+    <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
     <tbody>${body}</tbody>
   </table>`;
 }
 
-function sectionTitle(title: string): string {
-  return `<div style="font-size:16px;font-weight:700;color:${TEXT};margin:18px 0 8px;">${escapeHtml(title)}</div>`;
-}
-
-function ticketRows(items: ServiceItem[]): string[][] {
-  return items.flatMap((item) => {
+function ticketTable(items: ServiceItem[]): string {
+  const rows: Array<{ airline: string; sector: string; depart: string; ret: string }> = [];
+  for (const item of items) {
     const details = (item.details as DetailMap | null) || {};
-    const airline = text(details.airline) || item.description || '';
+    const airline = text(details.airline) || item.description || '-';
     const nested = Array.isArray(details.rows) && details.rows.length
       ? (details.rows as DetailMap[])
       : [];
-    if (nested.some((row) => text(row.sector) || text(row.date))) {
-      return nested.map((row) => [
-        escapeHtml(airline),
-        escapeHtml(text(row.sector || details.sector)),
-        escapeHtml(formatDate(text(row.date || details.departureDate))),
-        escapeHtml(formatDate(text(row.returnDate || details.returnDate))),
-      ]);
+    if (nested.some((row) => text(row.sector) || text(row.date) || text(row.departureDate))) {
+      for (const row of nested) {
+        rows.push({
+          airline,
+          sector: text(row.sector || details.sector) || '-',
+          depart: formatDate(text(row.date || row.departureDate || details.departureDate)) || '-',
+          ret: formatDate(text(row.returnDate || details.returnDate)),
+        });
+      }
+    } else {
+      rows.push({
+        airline,
+        sector: text(details.sector) || '-',
+        depart: formatDate(text(details.departureDate || details.date)) || '-',
+        ret: formatDate(text(details.returnDate)),
+      });
     }
-    return [[
-      escapeHtml(airline),
-      escapeHtml(text(details.sector)),
-      escapeHtml(formatDate(text(details.departureDate))),
-      escapeHtml(formatDate(text(details.returnDate))),
-    ]];
-  });
+  }
+  if (!rows.length) {
+    rows.push({ airline: '-', sector: '-', depart: '-', ret: '' });
+  }
+  const roundTrip = rows.some((row) => row.ret);
+  if (roundTrip) {
+    return dataTable(
+      ['Airline Name', 'Sector', 'Departure Date', 'Return Date'],
+      rows.map((row) => [escapeHtml(row.airline), escapeHtml(row.sector), escapeHtml(row.depart), escapeHtml(row.ret || '-')]),
+    );
+  }
+  return dataTable(
+    ['Airline Name', 'Sector', 'Date'],
+    rows.map((row) => [escapeHtml(row.airline), escapeHtml(row.sector), escapeHtml(row.depart)]),
+  );
 }
 
-function visaRows(items: ServiceItem[]): string[][] {
-  return items.map((item) => {
+function visaTable(items: ServiceItem[]): string {
+  const rows = items.map((item) => {
     const details = (item.details as DetailMap | null) || {};
-    return [escapeHtml(text(details.visaType) || item.description || 'Visa')];
+    const visaType = text(details.visaType) || item.description || 'Umrah';
+    const country = text(details.country);
+    return { visaType, country };
   });
+  const showCountry = rows.some((row) => row.country);
+  if (showCountry) {
+    return dataTable(
+      ['Visa Type', 'Country'],
+      rows.map((row) => [escapeHtml(row.visaType), escapeHtml(row.country || '-')]),
+    );
+  }
+  return dataTable(
+    ['Visa Type'],
+    (rows.length ? rows : [{ visaType: 'Umrah', country: '' }]).map((row) => [escapeHtml(row.visaType)]),
+  );
 }
 
 type HotelGroup = { name: string; city: string; rows: string[][] };
@@ -224,12 +250,12 @@ function hotelGroups(
         text(row.city || details.city),
         [
           escapeHtml(text(row.numRooms) || '1'),
-          escapeHtml(text(row.roomType || details.roomType || fallback.roomDetails)),
-          escapeHtml(formatDate(checkIn)),
-          escapeHtml(formatDate(checkOut)),
-          escapeHtml(nights ? String(nights) : ''),
-          escapeHtml(text(row.view || details.view)),
-          escapeHtml(text(row.mealPlan || details.mealPlan)),
+          escapeHtml(text(row.roomType || details.roomType || fallback.roomDetails) || '-'),
+          escapeHtml(formatDate(checkIn) || '-'),
+          escapeHtml(formatDate(checkOut) || '-'),
+          escapeHtml(nights ? String(nights) : '-'),
+          escapeHtml(text(row.view || details.view) || '-'),
+          escapeHtml(text(row.mealPlan || details.mealPlan) || '-'),
         ],
       );
     }
@@ -242,97 +268,70 @@ function hotelGroups(
       city: '',
       rows: [[
         '1',
-        escapeHtml(text(fallback.roomDetails)),
-        escapeHtml(formatDate(fallback.checkInDate)),
-        escapeHtml(formatDate(fallback.checkOutDate)),
-        escapeHtml(nights ? String(nights) : ''),
-        '',
-        '',
+        escapeHtml(text(fallback.roomDetails) || '-'),
+        escapeHtml(formatDate(fallback.checkInDate) || '-'),
+        escapeHtml(formatDate(fallback.checkOutDate) || '-'),
+        escapeHtml(nights ? String(nights) : '-'),
+        '-',
+        '-',
       ]],
     });
   }
   return groups;
 }
 
-function transportRows(items: ServiceItem[], fallback?: DetailMap): string[][] {
+function transportTable(items: ServiceItem[], fallback?: DetailMap): string {
   const rows: string[][] = [];
   for (const item of items) {
     const details = (item.details as DetailMap | null) || {};
     for (const row of rowsOf(details)) {
       const sector = text(row.sector || details.sector || fallback?.sector) || '-';
-      const vehicle = text(row.vehicleType || details.vehicleType || fallback?.vehicleType || item.description);
+      const vehicle = text(row.vehicleType || details.vehicleType || fallback?.vehicleType || item.description) || '-';
       rows.push([escapeHtml(sector), escapeHtml(vehicle)]);
     }
   }
   if (!rows.length && fallback && (fallback.sector || fallback.vehicleType || fallback.description)) {
     rows.push([
       escapeHtml(text(fallback.sector) || '-'),
-      escapeHtml(text(fallback.vehicleType || fallback.description)),
+      escapeHtml(text(fallback.vehicleType || fallback.description) || '-'),
     ]);
   }
-  return rows;
+  if (!rows.length) rows.push(['-', '-']);
+  return dataTable(['Sector', 'Transport Type'], rows);
 }
 
-function boldCell(label: string, value: string): string[] {
-  return [
-    `<span style="font-weight:700;">${label}</span>`,
-    `<span style="font-weight:700;">${value}</span>`,
-  ];
-}
-
-function invoicePricingRows(doc: CompletePackageDoc): string[][] {
-  const currency = doc.booking?.currency || 'PKR';
-  const invoice = doc.invoice;
-  const items = invoice?.items || [];
-  const rows: string[][] = [];
-
-  for (const item of items) {
-    const qty = Number(item.quantity) || 1;
-    const label = qty > 1 ? `${item.description || 'Service'} × ${qty}` : (item.description || 'Service');
-    rows.push([escapeHtml(label), money(item.amount ?? item.unitPrice, currency)]);
-  }
-
-  if (number(invoice?.subtotal)) rows.push(['Subtotal', money(invoice?.subtotal, currency)]);
-  if (number(invoice?.tax)) rows.push(['Tax', money(invoice?.tax, currency)]);
-  if (number(invoice?.discount)) rows.push(['Discount', money(invoice?.discount, currency)]);
-
-  const total = number(invoice?.totalAmount ?? doc.booking?.totalAmount);
-  const paid = number(invoice?.paidAmount);
-  rows.push(boldCell('Total Amount', money(total, currency)));
-  if (paid > 0) rows.push(['Paid', money(paid, currency)]);
-  rows.push(boldCell('Balance Due', money(Math.max(0, total - paid), currency)));
-  return rows.length ? rows : [boldCell('Total Amount', money(total, currency))];
-}
-
-function voucherPricingRows(doc: CompletePackageDoc): string[][] {
+function pricingTable(doc: CompletePackageDoc): string {
   const booking = doc.booking;
   const currency = booking?.currency || 'PKR';
   const total = number(doc.invoice?.totalAmount ?? booking?.totalAmount);
-  const paid = number(doc.invoice?.paidAmount);
   const adults = booking?.adults || 0;
   const children = booking?.children || 0;
   const infants = booking?.infants || 0;
   const determined = booking?.priceMode !== 'BREAKDOWN';
+  const rows: string[] = [];
 
   if (determined) {
-    const rows: string[][] = [];
-    if (adults > 0) rows.push(['Price per Adult', money(booking?.priceAdult, currency)]);
-    if (children > 0) rows.push(['Price per Child', money(booking?.priceChild, currency)]);
-    if (infants > 0) rows.push(['Price per Infant', money(booking?.priceInfant, currency)]);
-    rows.push(boldCell('Total Price', money(total, currency)));
-    return rows;
+    if (adults > 0 && number(booking?.priceAdult) > 0) {
+      rows.push(`<tr><td>Price per Adult</td><td style="text-align:right">${money(booking?.priceAdult, currency)}</td></tr>`);
+    }
+    if (children > 0 && number(booking?.priceChild) > 0) {
+      rows.push(`<tr><td>Price per Child</td><td style="text-align:right">${money(booking?.priceChild, currency)}</td></tr>`);
+    }
+    if (infants > 0 && number(booking?.priceInfant) > 0) {
+      rows.push(`<tr><td>Price per Infant</td><td style="text-align:right">${money(booking?.priceInfant, currency)}</td></tr>`);
+    }
+    rows.push(`<tr><td><strong>Total Price</strong></td><td style="text-align:right"><strong>${money(total, currency)}</strong></td></tr>`);
+  } else {
+    const paid = number(doc.invoice?.paidAmount);
+    rows.push(`<tr><td>Total Package Amount</td><td style="text-align:right">${money(total, currency)}</td></tr>`);
+    if (paid > 0) rows.push(`<tr><td>Advance Paid</td><td style="text-align:right">${money(paid, currency)}</td></tr>`);
+    rows.push(`<tr><td><strong>Total Price</strong></td><td style="text-align:right"><strong>${money(total, currency)}</strong></td></tr>`);
   }
 
-  return [
-    ['Total Package Amount', money(total, currency)],
-    ['Advance Paid', money(paid, currency)],
-    ['Balance Amount', money(Math.max(0, total - paid), currency)],
-    boldCell('Total Price', money(total, currency)),
-  ];
-}
-
-function pricingRows(doc: CompletePackageDoc): string[][] {
-  return doc.documentKind === 'invoice' ? invoicePricingRows(doc) : voucherPricingRows(doc);
+  return `<table class="centered">
+    <thead><tr><th>Description</th><th>Amount</th></tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table>`;
 }
 
 export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promise<string> {
@@ -341,20 +340,13 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
   const isB2B = customer?.customerType === 'B2B' && !!customer.companyName;
   const guestName = booking?.guestName
     || (isB2B ? text(customer?.contactPerson) : `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim())
-    || doc.guestName;
+    || doc.guestName
+    || 'Guest';
   const toLine = isB2B ? (customer!.companyName || guestName) : guestName;
-  const firstName = (isB2B ? (customer?.contactPerson || guestName) : guestName).split(' ')[0] || guestName;
   const isInvoice = doc.documentKind === 'invoice';
   const title = isInvoice ? 'Invoice' : 'Voucher';
-  const numberLabel = isInvoice ? 'Invoice No' : 'Voucher No';
-  const docNumber = isInvoice
-    ? (doc.invoice?.invoiceNumber || doc.voucherNumber)
-    : doc.voucherNumber;
-  const dueDate = isInvoice ? formatDate(doc.invoice?.dueDate) : '';
-  const greeting = isInvoice
-    ? 'Following is the invoice for your booking. We hope it meets your requirement.'
-    : 'Following is the voucher for your booking. We hope it meets your requirement.';
-  const printDate = formatDate(doc.issuedAt || new Date());
+  const greetingKind = isInvoice ? 'invoice' : 'voucher';
+  const printDate = formatDate(doc.issuedAt || new Date()) || '-';
   const logo = logoDataUri();
   const adults = booking?.adults || 0;
   const children = booking?.children || 0;
@@ -385,136 +377,164 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
     checkOutDate: doc.checkOutDate,
     roomDetails: doc.roomDetails,
   });
-  const tickets = ticketRows(ticketItems);
-  const visas = visaRows(visaItems);
-  const transports = transportRows(transportItems, transportFallback);
-  const prices = pricingRows(doc);
 
   const staff = booking?.createdBy
     ? `${booking.createdBy.firstName || ''} ${booking.createdBy.lastName || ''}`.trim()
     : '';
   const staffPhone = text(booking?.createdBy?.phone);
 
+  const includeRows = (included.length ? included : ['-']).map((label) =>
+    `<tr><td>${escapeHtml(label)}</td></tr>`
+  ).join('');
+
   const passengerRows = [
-    ['Adults', String(adults)],
-    ...(children > 0 ? [['Children', String(children)]] : []),
-    ...(infants > 0 ? [['Infants', String(infants)]] : []),
-    [
-      `<span style="font-weight:700;">Total Pax</span>`,
-      `<span style="font-weight:700;">${totalPax || ''}</span>`,
-    ],
-  ];
-
-  const includeRows = (included.length ? included : ['—']).map((label) =>
-    `<tr><td style="border:1px solid ${BORDER};padding:9px 10px;font-size:14px;color:${TEXT};background:${WHITE};">${escapeHtml(label)}</td></tr>`
-  ).join('');
-
-  const passengerHtml = passengerRows.map((row) =>
-    `<tr>
-      <td style="border:1px solid ${BORDER};padding:9px 10px;font-size:14px;color:${TEXT};background:${WHITE};width:70%;">${row[0]}</td>
-      <td style="border:1px solid ${BORDER};padding:9px 10px;font-size:14px;color:${TEXT};background:${WHITE};text-align:center;">${row[1]}</td>
-    </tr>`
-  ).join('');
+    ...(adults > 0 ? [`<tr><td>Adults</td><td>${adults}</td></tr>`] : []),
+    ...(children > 0 ? [`<tr><td>Children</td><td>${children}</td></tr>`] : []),
+    ...(infants > 0 ? [`<tr><td>Infants</td><td>${infants}</td></tr>`] : []),
+    `<tr><td><strong>Total Pax</strong></td><td><strong>${totalPax}</strong></td></tr>`,
+  ].join('');
 
   const hotelHtml = hotels.map((group) => {
     const cityPart = group.city ? ` (${escapeHtml(group.city)})` : '';
-    return `${sectionTitle('Accommodation Details')}
-      <div style="font-size:14px;font-weight:700;color:${TEXT};margin:0 0 6px;">Hotel Name: ${escapeHtml(group.name)}${cityPart}</div>
-      ${dataTable(['QTY', 'Room Type', 'Check In', 'Check Out', 'Nights', 'View', 'Meal Plan'], group.rows)}`;
+    return `<div class="hotel-sector">
+      ${heading('Accommodation Details')}
+      <div class="hotel-title"><strong>Hotel Name:</strong> ${escapeHtml(group.name)}${cityPart}</div>
+      ${dataTable(['QTY', 'Room Type', 'Check In', 'Check Out', 'Nights', 'View', 'Meal Plan'], group.rows, ['center', 'center', 'center', 'center', 'center', 'center', 'center'], true)}
+    </div>`;
   }).join('');
 
-  const watermark = logo
-    ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:260px;width:280px;height:280px;margin-left:-140px;opacity:0.09;pointer-events:none;z-index:0;" />
-       <img src="${logo}" alt="" style="position:absolute;left:50%;top:900px;width:240px;height:240px;margin-left:-120px;opacity:0.08;pointer-events:none;z-index:0;" />`
-    : '';
-
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(docNumber)}</title>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)} ${escapeHtml(doc.voucherNumber)}</title>
 <style>
-  @page { size: A4 portrait; margin: 10mm; background: #ffffff; }
+  @page { size: A4 portrait; margin: 10mm; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; width: 100%; max-width: 100%; overflow: hidden; background: #ffffff !important; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
-  table { max-width: 100%; }
-  img { border: 0; max-width: 100%; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: ${TEXT};
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 14px;
+  }
+  #invoice-root { position: relative; padding: 8px 4px 12px; background: #ffffff; }
+  .quote-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px; }
+  .quote-left { line-height: 1.6; }
+  .quote-right { text-align: center; }
+  .quote-title { font-weight: 800; font-size: 20px; margin-top: 4px; color: ${TEXT}; }
+  .quote-intro { margin: 14px 0; font-size: 15px; }
+  h3 { font-size: 16px; font-weight: 700; margin: 18px 0 8px; color: ${TEXT}; }
+  .outer-box {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid ${BOX_BORDER};
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 18px;
+    max-width: 1000px;
+  }
+  .outer-box .box { flex: 1; min-width: 0; display: flex; justify-content: center; }
+  .outer-box .box table { width: 100%; max-width: 380px; border-collapse: collapse; }
+  .outer-box .box table th, .outer-box .box table td {
+    border: 1px solid ${BORDER};
+    padding: 8px;
+    text-align: left;
+    background: ${WHITE};
+  }
+  .outer-box .divider { border-left: 1px solid ${BORDER}; margin: 0 12px; flex-shrink: 0; }
+  table.centered {
+    border-collapse: collapse;
+    margin: 12px 0;
+    width: 70%;
+    max-width: 750px;
+  }
+  table.centered.full { width: 100%; max-width: none; }
+  table.centered th, table.centered td {
+    border: 1px solid ${BORDER};
+    padding: 8px;
+    text-align: left;
+    background: ${WHITE};
+  }
+  table.centered thead th,
+  .outer-box .box table thead th {
+    background: ${NAVY} !important;
+    color: ${WHITE} !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .hotel-sector { width: 100%; max-width: 1000px; margin: 18px 0; }
+  .hotel-sector table.centered { width: 100%; max-width: none; }
+  .hotel-sector th, .hotel-sector td { text-align: center; }
+  .hotel-title { margin-bottom: 8px; font-size: 14px; }
+  .quotation-closing { border-top: 6px solid ${NAVY}; margin-top: 18px; padding-top: 8px; }
+  .closing-signature { text-align: right; line-height: 1.35; }
+  .closing-company { margin-top: 24px; line-height: 1.5; font-size: 13px; }
+  img { border: 0; }
 </style>
 </head>
-<body style="background:#ffffff;margin:0;padding:0;width:100%;max-width:100%;overflow:hidden;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:100%;margin:0 auto;border-collapse:collapse;table-layout:fixed;position:relative;background:#ffffff;">
-  <tr>
-    <td style="padding:12px 10px 12px;position:relative;background:#ffffff;">
-      ${watermark}
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
-        <tr>
-          <td width="58%" valign="top" style="width:58%;vertical-align:top;font-size:13px;font-weight:700;color:${TEXT};line-height:1.7;padding-right:8px;">
-            Date: ${escapeHtml(printDate)}<br>
-            To: ${escapeHtml(toLine)}<br>
-            ${escapeHtml(numberLabel)}: ${escapeHtml(docNumber)}${dueDate ? `<br>Due Date: ${escapeHtml(dueDate)}` : ''}
-          </td>
-          <td width="42%" valign="top" align="right" style="width:42%;vertical-align:top;text-align:right;overflow:hidden;">
-            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="96" height="64" style="width:96px;height:64px;object-fit:contain;display:inline-block;" />` : ''}
-            <div style="font-size:15px;font-weight:700;color:${TEXT};margin-top:4px;line-height:1.2;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
-            <div style="font-size:18px;font-weight:700;color:${NAVY};margin-top:3px;line-height:1.2;">${escapeHtml(title)}</div>
-          </td>
-        </tr>
-      </table>
-
-      <div style="border-top:3px solid #000;margin:14px 0 16px;"></div>
-
-      <div style="font-size:13px;color:${TEXT};line-height:1.7;">
-        Dear ${escapeHtml(firstName)},<br><br>
-        ${escapeHtml(greeting)}
+<body>
+<div id="invoice-root">
+  ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:38%;width:520px;margin-left:-260px;opacity:0.065;pointer-events:none;z-index:0;">` : ''}
+  <div style="position:relative;z-index:1;">
+    <div class="quote-header">
+      <div class="quote-left">
+        <div style="margin-top:10px;"><strong>Date:</strong> ${escapeHtml(printDate)}</div>
+        <div style="margin-top:8px;"><strong>To:</strong> ${escapeHtml(toLine)}</div>
       </div>
-
-      ${sectionTitle('Booking Summary')}
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;background:${SUMMARY_BG};">
-        <tr>
-          <td style="padding:10px;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
-              <tr>
-                <td width="48%" valign="top" style="width:48%;vertical-align:top;padding-right:8px;">
-                  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
-                    <tr><th style="background:${NAVY};color:${WHITE};font-size:14px;font-weight:700;padding:10px;text-align:left;border:1px solid ${BORDER};">Booking Includes</th></tr>
-                    ${includeRows}
-                  </table>
-                </td>
-                <td width="52%" valign="top" style="width:52%;vertical-align:top;padding-left:8px;">
-                  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
-                    <tr><th colspan="2" style="background:${NAVY};color:${WHITE};font-size:14px;font-weight:700;padding:10px;text-align:left;border:1px solid ${BORDER};">Passenger Details</th></tr>
-                    ${passengerHtml}
-                  </table>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-
-      ${tickets.length ? `${sectionTitle('Ticket Details')}${dataTable(['Airline Name', 'Sector', 'Departure Date', 'Return Date'], tickets)}` : ''}
-      ${visas.length ? `${sectionTitle('Visa Details')}${dataTable(['Visa Type'], visas, ['left'])}` : ''}
-      ${hotelHtml}
-      ${transports.length ? `${sectionTitle('Transport Details')}${dataTable(['Sector', 'Transport Type'], transports, ['left', 'left'])}` : ''}
-      ${sectionTitle('Pricing Details')}${dataTable(['Description', 'Amount'], prices, ['left', 'right'])}
-
-      <div style="border-top:5px solid ${NAVY};margin:22px 0 14px;"></div>
-
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;width:100%;">
-        <tr>
-          <td width="42%"></td>
-          <td width="58%" align="right" style="text-align:right;font-size:13px;color:${TEXT};line-height:1.5;word-wrap:break-word;">
-            <div style="font-weight:700;">Thanks &amp; Regards</div>
-            ${staff ? `<div style="font-weight:400;">${escapeHtml(staff)}</div>` : ''}
-            ${staffPhone ? `<div style="font-weight:700;">Phone: ${escapeHtml(staffPhone)}</div>` : ''}
-            <div style="font-weight:700;">Reservation Print Date: ${escapeHtml(printDate)}</div>
-          </td>
-        </tr>
-      </table>
-
-      <div style="margin-top:22px;font-size:11px;color:${TEXT};line-height:1.7;">
-        <span style="font-weight:700;">${escapeHtml(BRAND_NAME.toUpperCase())} - ${escapeHtml(FOOTER_ADDRESS)}</span><br>
-        <span style="font-weight:400;">&#128222; ${escapeHtml(FOOTER_PHONE)} &nbsp; | &nbsp; &#9993; ${escapeHtml(FOOTER_EMAIL)} &nbsp; | &nbsp; ${escapeHtml(FOOTER_WEB)}</span>
+      <div class="quote-right">
+        ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" style="width:120px;height:auto;margin-bottom:6px;object-fit:contain;">` : ''}
+        <div class="quote-title">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
+        <div style="font-weight:700;margin-top:4px">${escapeHtml(title)}</div>
       </div>
-    </td>
-  </tr>
-</table>
-</body></html>`;
+    </div>
+
+    <hr style="border:2px solid #000;margin:10px 0;">
+
+    <div class="quote-intro">Dear ${escapeHtml(guestName)},<br><br>Following is the ${greetingKind} for your booking. We hope it meets your requirement.</div>
+
+    ${heading('Booking Summary')}
+    <div class="outer-box">
+      <div class="box">
+        <table>
+          <thead><tr><th>Booking Includes</th></tr></thead>
+          <tbody>${includeRows}</tbody>
+        </table>
+      </div>
+      <div class="divider" aria-hidden="true"></div>
+      <div class="box">
+        <table>
+          <thead><tr><th colspan="2" style="text-align:center">Passenger Details</th></tr></thead>
+          <tbody>${passengerRows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    ${ticketItems.length ? `${heading('Ticket Details')}${ticketTable(ticketItems)}` : ''}
+    ${visaItems.length ? `${heading('Visa Details')}${visaTable(visaItems)}` : ''}
+    ${hotelHtml}
+    ${transportItems.length || transportFallback.sector || transportFallback.vehicleType
+      ? `${heading('Transport Details')}${transportTable(transportItems, transportFallback)}`
+      : ''}
+    ${heading('Pricing Details')}
+    ${pricingTable(doc)}
+
+    <footer class="quotation-closing">
+      <div class="closing-signature">
+        <strong>Thanks &amp; Regards</strong><br>
+        ${staff ? `${escapeHtml(staff)}<br>` : ''}
+        ${staffPhone ? `<strong>Phone:</strong> ${escapeHtml(staffPhone)}<br>` : ''}
+        <strong>Reservation Print Date:</strong> ${escapeHtml(printDate)}
+      </div>
+      <div class="closing-company">
+        <strong>${escapeHtml(BRAND_NAME.toUpperCase())}</strong> - ${escapeHtml(FOOTER_ADDRESS)}<br>
+        &#9742; ${escapeHtml(FOOTER_PHONE)} &nbsp; | &nbsp; &#9993; ${escapeHtml(FOOTER_EMAIL)} &nbsp; | &nbsp; ${escapeHtml(FOOTER_WEB)}
+      </div>
+    </footer>
+  </div>
+</div>
+</body>
+</html>`;
 }
