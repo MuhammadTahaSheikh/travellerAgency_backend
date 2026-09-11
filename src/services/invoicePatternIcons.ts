@@ -3,12 +3,12 @@ import path from 'path';
 
 let cachedLogoDataUri: string | null = null;
 
-/** Invoice header logo — cropped landscape lockup. */
+/** Invoice header logo — cropped horizontal asset (not the square 3000×3000 master). */
 export const LOGO_INVOICE = {
-  nativeWidth: 1600,
-  nativeHeight: 1045,
-  displayWidth: 168,
-  displayHeight: Math.round(168 * (1045 / 1600)),
+  nativeWidth: 1000,
+  nativeHeight: 733,
+  displayWidth: 210,
+  displayHeight: Math.round(210 * (733 / 1000)),
 };
 
 /** Embed logo as data URI so html2pdf never depends on CORS/static URLs. */
@@ -39,7 +39,7 @@ export function logoHtml(alt: string): string {
     alt="${alt}"
     width="${displayWidth}"
     height="${displayHeight}"
-    style="width:${displayWidth}px;height:${displayHeight}px;max-width:100%;object-fit:contain;object-position:left center;display:block;border:0;image-rendering:auto;-webkit-print-color-adjust:exact;print-color-adjust:exact;"
+    style="width:${displayWidth}px;height:${displayHeight}px;max-width:100%;object-fit:contain;object-position:left top;display:block;border:0;image-rendering:auto;-webkit-print-color-adjust:exact;print-color-adjust:exact;"
     decoding="sync"
     loading="eager"
   />`;
