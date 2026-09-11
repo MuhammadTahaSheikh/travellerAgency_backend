@@ -63,7 +63,9 @@ let cachedSquareLogo: string | null | undefined;
 function squareLogoDataUri(): string {
   if (cachedSquareLogo !== undefined) return cachedSquareLogo || '';
   const candidates = [
+    path.join(__dirname, '../../assets/huffaz-holiday-logo-invoice.png'),
     path.join(__dirname, '../../assets/huffaz-holiday-logo.png'),
+    path.join(__dirname, '../../../frontend/public/huffaz-holiday-logo-invoice.png'),
     path.join(__dirname, '../../../frontend/public/huffaz-holiday-logo.png'),
   ];
   for (const logoPath of candidates) {
@@ -349,7 +351,7 @@ export async function renderDefiniteConfirmationHtml(
 <table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;background:#ffffff;">
   <tr>
     <td style="padding:22px 28px 16px;position:relative;background:#ffffff;">
-      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:248px;width:280px;height:280px;margin-left:-140px;opacity:0.05;pointer-events:none;" />` : ''}
+      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:248px;width:320px;height:209px;margin-left:-160px;opacity:0.05;pointer-events:none;" />` : ''}
 
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
         <tr>
@@ -361,7 +363,7 @@ export async function renderDefiniteConfirmationHtml(
           <td width="42%" valign="top" align="right" style="width:42%;vertical-align:top;text-align:right;">
             <table cellpadding="0" cellspacing="0" align="right" style="border-collapse:collapse;">
               <tr><td align="center" style="text-align:center;">
-                ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="48" height="48" style="width:48px;height:48px;object-fit:contain;display:block;margin:0 auto 2px;" />` : ''}
+                ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="132" height="86" style="width:132px;height:86px;object-fit:contain;object-position:center;display:block;margin:0 auto 4px;" />` : ''}
                 <div style="font-size:15px;font-weight:700;letter-spacing:0.3px;color:${TEXT};line-height:1.2;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
                 <div style="font-size:11px;font-weight:400;color:${TEXT};margin-top:2px;">Definite Confirmation</div>
               </td></tr>

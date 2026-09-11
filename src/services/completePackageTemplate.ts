@@ -85,7 +85,9 @@ let cachedLogo: string | null | undefined;
 function logoDataUri(): string {
   if (cachedLogo !== undefined) return cachedLogo || '';
   const candidates = [
+    path.join(__dirname, '../../assets/huffaz-holiday-logo-invoice.png'),
     path.join(__dirname, '../../assets/huffaz-holiday-logo.png'),
+    path.join(__dirname, '../../../frontend/public/huffaz-holiday-logo-invoice.png'),
     path.join(__dirname, '../../../frontend/public/huffaz-holiday-logo.png'),
   ];
   for (const logoPath of candidates) {
@@ -444,7 +446,7 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
 <table id="invoice-root" width="740" cellpadding="0" cellspacing="0" style="width:740px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;background:#ffffff;">
   <tr>
     <td style="padding:16px 18px 18px;position:relative;background:#ffffff;">
-      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:280px;width:360px;height:360px;margin-left:-180px;opacity:0.065;pointer-events:none;z-index:0;">` : ''}
+      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:280px;width:360px;height:235px;margin-left:-180px;opacity:0.065;pointer-events:none;z-index:0;">` : ''}
 
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;position:relative;z-index:1;">
         <tr>
@@ -453,7 +455,7 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
             <div style="margin-top:8px;"><strong>To:</strong> ${escapeHtml(toLine)}</div>
           </td>
           <td width="42%" valign="middle" align="center" style="width:42%;vertical-align:middle;text-align:center;">
-            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="120" style="width:120px;height:auto;margin-bottom:6px;object-fit:contain;">` : ''}
+            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="148" height="97" style="width:148px;height:97px;margin-bottom:6px;object-fit:contain;object-position:center;display:block;">` : ''}
             <div style="font-weight:800;font-size:20px;color:${TEXT};margin-top:4px;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
             <div style="font-weight:700;margin-top:4px;font-size:14px;">${escapeHtml(title)}</div>
           </td>
