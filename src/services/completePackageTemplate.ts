@@ -146,6 +146,10 @@ function heading(title: string): string {
   return `<div style="font-size:16px;font-weight:700;color:${TEXT};margin:18px 0 8px;font-family:Arial,Helvetica,sans-serif;">${escapeHtml(title)}</div>`;
 }
 
+function keepTogether(inner: string): string {
+  return `<div class="keep-together" style="display:block;page-break-inside:avoid;break-inside:avoid;">${inner}</div>`;
+}
+
 function dataTable(
   headers: string[],
   rows: string[][],
@@ -417,14 +421,14 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
 
   const hotelHtml = hotels.map((group) => {
     const cityPart = group.city ? ` (${escapeHtml(group.city)})` : '';
-    return `${heading('Accommodation Details')}
+    return keepTogether(`${heading('Accommodation Details')}
       <div style="font-size:14px;font-weight:700;color:${TEXT};margin:0 0 8px;">Hotel Name: ${escapeHtml(group.name)}${cityPart}</div>
       ${dataTable(
         ['QTY', 'Room Type', 'Check In', 'Check Out', 'Nights', 'View', 'Meal Plan'],
         group.rows,
         ['left', 'left', 'left', 'left', 'left', 'left', 'left'],
         { width: '70%', colWidths: ['8%', '18%', '16%', '16%', '10%', '16%', '16%'] },
-      )}`;
+      )}`);
   }).join('');
 
   return `<!DOCTYPE html>
@@ -437,15 +441,21 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #ffffff !important; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
   img { border: 0; }
-  .keep-together { page-break-inside: avoid !important; break-inside: avoid !important; }
+  #invoice-root { width: 100%; max-width: 740px; margin: 0 auto; position: relative; background: #ffffff; padding: 16px 18px 18px; }
+  .keep-together {
+    display: block;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-before: auto;
+    page-break-after: auto;
+  }
 </style>
 </head>
 <body style="background:#ffffff;margin:0;padding:0;">
-<table id="invoice-root" width="740" cellpadding="0" cellspacing="0" style="width:740px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;background:#ffffff;">
-  <tr>
-    <td style="padding:16px 18px 18px;position:relative;background:#ffffff;">
-      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:280px;width:360px;height:360px;margin-left:-180px;opacity:0.065;pointer-events:none;z-index:0;">` : ''}
+<div id="invoice-root">
+      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:280px;width:360px;height:235px;margin-left:-180px;opacity:0.065;pointer-events:none;z-index:0;">` : ''}
 
+      ${keepTogether(`
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;position:relative;z-index:1;">
         <tr>
           <td width="58%" valign="middle" style="width:58%;vertical-align:middle;font-size:14px;color:${TEXT};line-height:1.7;padding:8px 8px 8px 0;">
@@ -453,17 +463,16 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
             <div style="margin-top:8px;"><strong>To:</strong> ${escapeHtml(toLine)}</div>
           </td>
           <td width="42%" valign="middle" align="center" style="width:42%;vertical-align:middle;text-align:center;">
-            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="120" style="width:120px;height:auto;margin-bottom:6px;object-fit:contain;">` : ''}
-            <div style="font-weight:800;font-size:20px;color:${TEXT};margin-top:4px;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
+            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="148" height="97" style="width:148px;height:97px;margin:0 auto 6px;object-fit:contain;object-position:center;display:block;">` : ''}
             <div style="font-weight:700;margin-top:4px;font-size:14px;">${escapeHtml(title)}</div>
           </td>
         </tr>
       </table>
-
       <hr style="border:2px solid #000;margin:10px 0;">
-
       <div style="margin:14px 0;font-size:15px;color:${TEXT};line-height:1.6;">Dear ${escapeHtml(guestName)},<br><br>Following is the ${greetingKind} for your booking. We hope it meets your requirement.</div>
+      `)}
 
+      ${keepTogether(`
       ${heading('Booking Summary')}
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;border:1px solid ${BOX_BORDER};margin:0 0 18px;background:${WHITE};">
         <tr>
@@ -482,19 +491,18 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
           </td>
         </tr>
       </table>
+      `)}
 
-      ${ticketItems.length ? `${heading('Ticket Details')}${ticketTable(ticketItems)}` : ''}
-      ${visaItems.length ? `${heading('Visa Details')}${visaTable(visaItems)}` : ''}
+      ${ticketItems.length ? keepTogether(`${heading('Ticket Details')}${ticketTable(ticketItems)}`) : ''}
+      ${visaItems.length ? keepTogether(`${heading('Visa Details')}${visaTable(visaItems)}`) : ''}
       ${hotelHtml}
       ${transportItems.length || transportFallback.sector || transportFallback.vehicleType
-        ? `${heading('Transport Details')}${transportTable(transportItems, transportFallback)}`
+        ? keepTogether(`${heading('Transport Details')}${transportTable(transportItems, transportFallback)}`)
         : ''}
-      ${heading('Pricing Details')}
-      ${pricingTable(doc)}
+      ${keepTogether(`${heading('Pricing Details')}${pricingTable(doc)}`)}
 
-      <table class="keep-together" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin-top:18px;page-break-inside:avoid;break-inside:avoid;page-break-before:auto;">
-        <tr>
-          <td style="border-top:6px solid ${NAVY};padding-top:10px;">
+      ${keepTogether(`
+      <div style="margin-top:18px;border-top:6px solid ${NAVY};padding-top:10px;">
             <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
               <tr>
                 <td width="40%"></td>
@@ -510,12 +518,9 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
               <strong>${escapeHtml(BRAND_NAME.toUpperCase())}</strong> - ${escapeHtml(FOOTER_ADDRESS)}<br>
               &#9742; ${escapeHtml(FOOTER_PHONE)} &nbsp; | &nbsp; &#9993; ${escapeHtml(FOOTER_EMAIL)} &nbsp; | &nbsp; ${escapeHtml(FOOTER_WEB)}
             </div>
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-</table>
+      </div>
+      `)}
+</div>
 </body>
 </html>`;
 }

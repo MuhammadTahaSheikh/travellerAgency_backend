@@ -26,7 +26,7 @@ export function logoUrl(baseUrl?: string): string {
 }
 
 export function logoHtml(baseUrl?: string, alt = BRAND_NAME): string {
-  return `<img src="${logoUrl(baseUrl)}" alt="${alt}" style="max-height:72px;max-width:220px;object-fit:contain" />`;
+  return `<img src="${logoUrl(baseUrl)}" alt="${alt}" style="max-height:72px;max-width:220px;width:auto;height:auto;object-fit:contain;object-position:left center;display:block;" />`;
 }
 
 export function issuerFromCustomer(customer: {

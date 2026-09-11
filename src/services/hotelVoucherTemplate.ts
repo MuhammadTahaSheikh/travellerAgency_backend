@@ -139,6 +139,10 @@ function sectionLabel(title: string): string {
   return `<div style="font-size:13px;font-weight:700;color:${TEXT};margin:4px 0 6px;">${escapeHtml(title)}</div>`;
 }
 
+function keepTogether(inner: string): string {
+  return `<div class="keep-together" style="display:block;page-break-inside:avoid;break-inside:avoid;">${inner}</div>`;
+}
+
 function hotelRows(
   items: ServiceItem[],
   fallback: { hotelName?: string | null; checkInDate?: Date | null; checkOutDate?: Date | null; roomDetails?: string | null }
@@ -316,16 +320,16 @@ export async function renderDefiniteConfirmationHtml(
   const stacked = [hotelTableRows, transportTableRows, ticketTableRows, visaTableRows].filter((rows) => rows.length).length > 1;
   const tables = [
     hotelTableRows.length
-      ? `${stacked ? sectionLabel('Hotel') : ''}${confirmationTable(['QTY', 'Room Type', 'Checkin', 'Checkout', 'Nights', 'Confirmation', 'View', 'Meal Plan'], hotelTableRows)}`
+      ? keepTogether(`${stacked ? sectionLabel('Hotel') : ''}${confirmationTable(['QTY', 'Room Type', 'Checkin', 'Checkout', 'Nights', 'Confirmation', 'View', 'Meal Plan'], hotelTableRows)}`)
       : '',
     transportTableRows.length
-      ? `${stacked ? sectionLabel('Transport') : ''}${confirmationTable(['QTY', 'Vehicle Type', 'From', 'To', 'Date', 'Confirmation'], transportTableRows)}`
+      ? keepTogether(`${stacked ? sectionLabel('Transport') : ''}${confirmationTable(['QTY', 'Vehicle Type', 'From', 'To', 'Date', 'Confirmation'], transportTableRows)}`)
       : '',
     ticketTableRows.length
-      ? `${stacked ? sectionLabel('Ticket') : ''}${confirmationTable(['QTY', 'Airline', 'Sector', 'Date', 'Class', 'Confirmation'], ticketTableRows)}`
+      ? keepTogether(`${stacked ? sectionLabel('Ticket') : ''}${confirmationTable(['QTY', 'Airline', 'Sector', 'Date', 'Class', 'Confirmation'], ticketTableRows)}`)
       : '',
     visaTableRows.length
-      ? `${stacked ? sectionLabel('Visa') : ''}${confirmationTable(['QTY', 'Visa Type', 'Country', 'Validity', 'Confirmation'], visaTableRows)}`
+      ? keepTogether(`${stacked ? sectionLabel('Visa') : ''}${confirmationTable(['QTY', 'Visa Type', 'Country', 'Validity', 'Confirmation'], visaTableRows)}`)
       : '',
   ].join('');
 
@@ -343,14 +347,19 @@ export async function renderDefiniteConfirmationHtml(
   html, body { margin: 0; padding: 0; background: #ffffff !important; color: ${TEXT}; font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
   table, td, th { background-color: transparent; }
   img { border: 0; }
+  #invoice-root { width: 100%; max-width: 780px; margin: 0 auto; position: relative; background: #ffffff; padding: 22px 28px 16px; }
+  .keep-together {
+    display: block;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
 </style>
 </head>
 <body style="background:#ffffff;margin:0;padding:0;">
-<table width="780" cellpadding="0" cellspacing="0" style="width:780px;max-width:100%;margin:0 auto;border-collapse:collapse;position:relative;background:#ffffff;">
-  <tr>
-    <td style="padding:22px 28px 16px;position:relative;background:#ffffff;">
-      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:248px;width:280px;height:280px;margin-left:-140px;opacity:0.05;pointer-events:none;" />` : ''}
+<div id="invoice-root">
+      ${logo ? `<img src="${logo}" alt="" style="position:absolute;left:50%;top:248px;width:320px;height:209px;margin-left:-160px;opacity:0.05;pointer-events:none;" />` : ''}
 
+      ${keepTogether(`
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
         <tr>
           <td width="58%" valign="top" style="width:58%;vertical-align:top;font-size:13px;line-height:1.55;color:${TEXT};">
@@ -361,19 +370,15 @@ export async function renderDefiniteConfirmationHtml(
           <td width="42%" valign="top" align="right" style="width:42%;vertical-align:top;text-align:right;">
             <table cellpadding="0" cellspacing="0" align="right" style="border-collapse:collapse;">
               <tr><td align="center" style="text-align:center;">
-                ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="48" height="48" style="width:48px;height:48px;object-fit:contain;display:block;margin:0 auto 2px;" />` : ''}
-                <div style="font-size:15px;font-weight:700;letter-spacing:0.3px;color:${TEXT};line-height:1.2;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
+                ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="132" height="86" style="width:132px;height:86px;object-fit:contain;object-position:center;display:block;margin:0 auto 6px;" />` : ''}
                 <div style="font-size:11px;font-weight:400;color:${TEXT};margin-top:2px;">Definite Confirmation</div>
               </td></tr>
             </table>
           </td>
         </tr>
       </table>
-
       <div style="border-top:1px solid ${LINE};margin:10px 0 14px;"></div>
-
       <div style="font-size:13px;color:${TEXT};margin-bottom:16px;">Thank you for considering ${escapeHtml(BRAND_NAME)} as your travel partner.</div>
-
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;background:#ffffff;">
         <tr>
           <td width="50%" style="width:50%;padding:6px 8px 6px 0;font-size:15px;color:${TEXT};background:#ffffff;">${field('Res No:', resNo)}</td>
@@ -384,16 +389,20 @@ export async function renderDefiniteConfirmationHtml(
           <td width="50%" style="width:50%;padding:6px 0;font-size:15px;color:${TEXT};background:#ffffff;">${field('Total PAX:', totalPax ? String(totalPax) : '')}</td>
         </tr>
       </table>
+      `)}
 
-      ${tables || confirmationTable(['QTY', 'Details'], [])}
+      ${tables || keepTogether(confirmationTable(['QTY', 'Details'], []))}
 
+      ${keepTogether(`
       <div style="margin-top:12px;font-size:12px;font-style:italic;font-weight:700;color:${MUTED};">
         Remarks:${remarksValue ? ` ${escapeHtml(remarksValue)}` : ''}
       </div>
       <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:10px;">
         ${remarkItems}
       </table>
+      `)}
 
+      ${keepTogether(`
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:36px;">
         <tr>
           <td width="50%" valign="top" style="width:50%;vertical-align:top;font-size:15px;color:${TEXT};line-height:1.45;">
@@ -408,14 +417,12 @@ export async function renderDefiniteConfirmationHtml(
           </td>
         </tr>
       </table>
-
       <div style="margin-top:22px;font-size:11px;font-weight:700;color:${TEXT};line-height:1.6;">
         ${escapeHtml(BRAND_NAME.toUpperCase())} - ${escapeHtml(FOOTER_ADDRESS)}<br>
         <span style="font-weight:400;">&#128222; ${escapeHtml(FOOTER_PHONE)} &nbsp; | &nbsp; &#9993; ${escapeHtml(FOOTER_EMAIL)} &nbsp; | &nbsp; &#127760; ${escapeHtml(FOOTER_WEB)}</span>
       </div>
-    </td>
-  </tr>
-</table>
+      `)}
+</div>
 </body></html>`;
 }
 
