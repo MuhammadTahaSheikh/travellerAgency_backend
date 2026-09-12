@@ -362,8 +362,8 @@ export async function renderDefiniteConfirmationHtml(
           </td>
           <td width="42%" valign="top" align="right" style="width:42%;vertical-align:top;text-align:right;">
             <table cellpadding="0" cellspacing="0" align="right" style="border-collapse:collapse;">
-              <tr><td align="center" style="text-align:center;">
-                ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="132" height="86" style="width:132px;height:86px;object-fit:contain;object-position:center;display:block;margin:0 auto 4px;" />` : ''}
+              <tr><td align="right" style="text-align:right;">
+                ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="132" height="86" style="width:132px;height:86px;object-fit:contain;object-position:right center;display:block;margin:0 0 4px auto;" />` : ''}
                 <div style="font-size:15px;font-weight:700;letter-spacing:0.3px;color:${TEXT};line-height:1.2;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
                 <div style="font-size:11px;font-weight:400;color:${TEXT};margin-top:2px;">Definite Confirmation</div>
               </td></tr>

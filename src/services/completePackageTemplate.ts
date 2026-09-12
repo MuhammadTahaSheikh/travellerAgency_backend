@@ -454,8 +454,8 @@ export async function renderCompletePackageHtml(doc: CompletePackageDoc): Promis
             <div style="margin-top:10px;"><strong>Date:</strong> ${escapeHtml(printDate)}</div>
             <div style="margin-top:8px;"><strong>To:</strong> ${escapeHtml(toLine)}</div>
           </td>
-          <td width="42%" valign="middle" align="center" style="width:42%;vertical-align:middle;text-align:center;">
-            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="148" height="97" style="width:148px;height:97px;margin-bottom:6px;object-fit:contain;object-position:center;display:block;">` : ''}
+          <td width="42%" valign="middle" align="right" style="width:42%;vertical-align:middle;text-align:right;">
+            ${logo ? `<img src="${logo}" alt="${escapeHtml(BRAND_NAME)}" width="148" height="97" style="width:148px;height:97px;margin:0 0 6px auto;object-fit:contain;object-position:right center;display:block;">` : ''}
             <div style="font-weight:800;font-size:20px;color:${TEXT};margin-top:4px;">${escapeHtml(BRAND_NAME.toUpperCase())}</div>
             <div style="font-weight:700;margin-top:4px;font-size:14px;">${escapeHtml(title)}</div>
           </td>
